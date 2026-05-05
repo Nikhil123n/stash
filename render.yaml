@@ -2,39 +2,9 @@
 #
 # Create this from Render Dashboard > New > Blueprint and connect the GitHub repo.
 # Secret values marked with sync: false must be entered in Render during setup.
-services:
-  - type: web
-    name: stash-api
-    runtime: docker
-    repo: https://github.com/Nikhil123n/stash
-    branch: main
-    dockerfilePath: backend/Dockerfile
-    dockerContext: .
-    dockerCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    preDeployCommand: python -m alembic upgrade head
-    healthCheckPath: /health
-    plan: starter
-    region: oregon
-    autoDeployTrigger: commit
-    maxShutdownDelaySeconds: 120
+envVarGroups:
+  - name: stash-shared-config
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: stash-postgres
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: stash-redis
-          property: connectionString
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: TELEGRAM_WEBHOOK_URL
-        sync: false
-      - key: YOUR_CHAT_ID
-        sync: false
-      - key: GOOGLE_CLOUD_PROJECT
-        sync: false
       - key: GOOGLE_APPLICATION_CREDENTIALS
         value: /etc/secrets/gcp-service-account.json
       - key: VERTEX_REGION
@@ -45,18 +15,6 @@ services:
         value: gemini-2.5-pro
       - key: GEMINI_INLINE_VIDEO_MAX_BYTES
         value: "18000000"
-      - key: R2_ACCOUNT_ID
-        sync: false
-      - key: R2_ACCESS_KEY
-        sync: false
-      - key: R2_SECRET_KEY
-        sync: false
-      - key: R2_BUCKET_NAME
-        sync: false
-      - key: R2_BUCKET_ID
-        sync: false
-      - key: SECRET_KEY
-        generateValue: true
       - key: DASHBOARD_URL
         value: https://stash-two-zeta.vercel.app
       - key: CORS_ORIGINS
@@ -77,16 +35,59 @@ services:
         value: "2"
       - key: YTDLP_FRAGMENT_RETRIES
         value: "2"
-      - key: YTDLP_COOKIES_BROWSER
-        sync: false
-      - key: YTDLP_COOKIES_FILE
-        sync: false
       - key: WHISPER_MODEL
         value: base
       - key: WHISPER_MIN_AVAILABLE_MEMORY_BYTES
         value: "838860800"
       - key: STASH_TMP_DIR
         value: /tmp
+
+services:
+  - type: web
+    name: stash-api
+    runtime: docker
+    repo: https://github.com/Nikhil123n/stash
+    branch: main
+    dockerfilePath: backend/Dockerfile
+    dockerContext: .
+    dockerCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    preDeployCommand: python -m alembic upgrade head
+    healthCheckPath: /health
+    plan: starter
+    region: oregon
+    autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - fromGroup: stash-shared-config
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stash-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: stash-redis
+          property: connectionString
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_URL
+        sync: false
+      - key: YOUR_CHAT_ID
+        sync: false
+      - key: GOOGLE_CLOUD_PROJECT
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY
+        sync: false
+      - key: R2_SECRET_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_BUCKET_ID
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
 
   - type: worker
     name: stash-worker
@@ -101,166 +102,32 @@ services:
     autoDeployTrigger: commit
     maxShutdownDelaySeconds: 300
     envVars:
+      - fromGroup: stash-shared-config
       - key: DATABASE_URL
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: DATABASE_URL
+        fromDatabase:
+          name: stash-postgres
+          property: connectionString
       - key: REDIS_URL
         fromService:
-          type: web
-          name: stash-api
-          envVarKey: REDIS_URL
+          type: keyvalue
+          name: stash-redis
+          property: connectionString
       - key: TELEGRAM_BOT_TOKEN
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: TELEGRAM_BOT_TOKEN
-      - key: TELEGRAM_WEBHOOK_URL
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: TELEGRAM_WEBHOOK_URL
+        sync: false
       - key: YOUR_CHAT_ID
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: YOUR_CHAT_ID
+        sync: false
       - key: GOOGLE_CLOUD_PROJECT
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: GOOGLE_CLOUD_PROJECT
-      - key: GOOGLE_APPLICATION_CREDENTIALS
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: GOOGLE_APPLICATION_CREDENTIALS
-      - key: VERTEX_REGION
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: VERTEX_REGION
-      - key: GEMINI_MODEL
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: GEMINI_MODEL
-      - key: GEMINI_VIDEO_MODEL
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: GEMINI_VIDEO_MODEL
-      - key: GEMINI_INLINE_VIDEO_MAX_BYTES
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: GEMINI_INLINE_VIDEO_MAX_BYTES
+        sync: false
       - key: R2_ACCOUNT_ID
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: R2_ACCOUNT_ID
+        sync: false
       - key: R2_ACCESS_KEY
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: R2_ACCESS_KEY
+        sync: false
       - key: R2_SECRET_KEY
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: R2_SECRET_KEY
+        sync: false
       - key: R2_BUCKET_NAME
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: R2_BUCKET_NAME
+        sync: false
       - key: R2_BUCKET_ID
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: R2_BUCKET_ID
-      - key: SECRET_KEY
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: SECRET_KEY
-      - key: DASHBOARD_URL
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: DASHBOARD_URL
-      - key: CORS_ORIGINS
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: CORS_ORIGINS
-      - key: SKIP_AUTH
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: SKIP_AUTH
-      - key: VIDEO_URL_ANALYSIS_ENABLED
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: VIDEO_URL_ANALYSIS_ENABLED
-      - key: VIDEO_URL_MAX_BYTES
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: VIDEO_URL_MAX_BYTES
-      - key: VIDEO_URL_MAX_DURATION_SECONDS
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: VIDEO_URL_MAX_DURATION_SECONDS
-      - key: VIDEO_URL_DOWNLOAD_FORMAT
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: VIDEO_URL_DOWNLOAD_FORMAT
-      - key: YTDLP_SOCKET_TIMEOUT_SECONDS
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: YTDLP_SOCKET_TIMEOUT_SECONDS
-      - key: YTDLP_RETRIES
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: YTDLP_RETRIES
-      - key: YTDLP_FRAGMENT_RETRIES
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: YTDLP_FRAGMENT_RETRIES
-      - key: YTDLP_COOKIES_BROWSER
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: YTDLP_COOKIES_BROWSER
-      - key: YTDLP_COOKIES_FILE
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: YTDLP_COOKIES_FILE
-      - key: WHISPER_MODEL
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: WHISPER_MODEL
-      - key: WHISPER_MIN_AVAILABLE_MEMORY_BYTES
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: WHISPER_MIN_AVAILABLE_MEMORY_BYTES
-      - key: STASH_TMP_DIR
-        fromService:
-          type: web
-          name: stash-api
-          envVarKey: STASH_TMP_DIR
+        sync: false
 
   - type: worker
     name: stash-beat
@@ -275,166 +142,22 @@ services:
     autoDeployTrigger: commit
     maxShutdownDelaySeconds: 120
     envVars:
+      - fromGroup: stash-shared-config
       - key: DATABASE_URL
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: DATABASE_URL
+        fromDatabase:
+          name: stash-postgres
+          property: connectionString
       - key: REDIS_URL
         fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: REDIS_URL
+          type: keyvalue
+          name: stash-redis
+          property: connectionString
       - key: TELEGRAM_BOT_TOKEN
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: TELEGRAM_BOT_TOKEN
-      - key: TELEGRAM_WEBHOOK_URL
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: TELEGRAM_WEBHOOK_URL
+        sync: false
       - key: YOUR_CHAT_ID
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: YOUR_CHAT_ID
+        sync: false
       - key: GOOGLE_CLOUD_PROJECT
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: GOOGLE_CLOUD_PROJECT
-      - key: GOOGLE_APPLICATION_CREDENTIALS
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: GOOGLE_APPLICATION_CREDENTIALS
-      - key: VERTEX_REGION
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: VERTEX_REGION
-      - key: GEMINI_MODEL
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: GEMINI_MODEL
-      - key: GEMINI_VIDEO_MODEL
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: GEMINI_VIDEO_MODEL
-      - key: GEMINI_INLINE_VIDEO_MAX_BYTES
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: GEMINI_INLINE_VIDEO_MAX_BYTES
-      - key: R2_ACCOUNT_ID
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: R2_ACCOUNT_ID
-      - key: R2_ACCESS_KEY
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: R2_ACCESS_KEY
-      - key: R2_SECRET_KEY
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: R2_SECRET_KEY
-      - key: R2_BUCKET_NAME
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: R2_BUCKET_NAME
-      - key: R2_BUCKET_ID
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: R2_BUCKET_ID
-      - key: SECRET_KEY
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: SECRET_KEY
-      - key: DASHBOARD_URL
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: DASHBOARD_URL
-      - key: CORS_ORIGINS
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: CORS_ORIGINS
-      - key: SKIP_AUTH
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: SKIP_AUTH
-      - key: VIDEO_URL_ANALYSIS_ENABLED
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: VIDEO_URL_ANALYSIS_ENABLED
-      - key: VIDEO_URL_MAX_BYTES
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: VIDEO_URL_MAX_BYTES
-      - key: VIDEO_URL_MAX_DURATION_SECONDS
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: VIDEO_URL_MAX_DURATION_SECONDS
-      - key: VIDEO_URL_DOWNLOAD_FORMAT
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: VIDEO_URL_DOWNLOAD_FORMAT
-      - key: YTDLP_SOCKET_TIMEOUT_SECONDS
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: YTDLP_SOCKET_TIMEOUT_SECONDS
-      - key: YTDLP_RETRIES
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: YTDLP_RETRIES
-      - key: YTDLP_FRAGMENT_RETRIES
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: YTDLP_FRAGMENT_RETRIES
-      - key: YTDLP_COOKIES_BROWSER
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: YTDLP_COOKIES_BROWSER
-      - key: YTDLP_COOKIES_FILE
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: YTDLP_COOKIES_FILE
-      - key: WHISPER_MODEL
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: WHISPER_MODEL
-      - key: WHISPER_MIN_AVAILABLE_MEMORY_BYTES
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: WHISPER_MIN_AVAILABLE_MEMORY_BYTES
-      - key: STASH_TMP_DIR
-        fromService:
-          type: worker
-          name: stash-worker
-          envVarKey: STASH_TMP_DIR
+        sync: false
 
   - type: keyvalue
     name: stash-redis
