@@ -150,9 +150,9 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
             await send_unsupported(chat_id)
             return {"ok": True}
 
-        from tasks import process_artifact
+        from task_queue import enqueue_process_artifact
 
-        process_artifact.delay(dict(payload))
+        enqueue_process_artifact(dict(payload))
         await send_processing_ack(chat_id)
     except Exception as exc:
         logger.exception("telegram_webhook_handling_failed", duration_ms=0)

@@ -9,8 +9,6 @@ import time
 from typing import Any
 from uuid import UUID, uuid4
 
-from celery import Celery
-from celery.schedules import crontab
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -27,6 +25,7 @@ from bot import (
     send_error,
     send_subcategory_proposal,
 )
+from celery_app import celery
 from config import get_env, get_int_env
 from digest import format_digest_message, get_digest_items
 from logging_config import structlog
@@ -44,31 +43,6 @@ from storage.db import (
 from storage.r2 import download_telegram_file, fetch_og_metadata, upload_to_r2
 
 logger = structlog.get_logger(__name__)
-
-REDIS_URL: str = get_env("REDIS_URL", required=True)
-
-celery: Celery = Celery("stash", broker=REDIS_URL, backend=REDIS_URL)
-celery.conf.update(
-    accept_content=["json"],
-    beat_schedule={
-        "weekly-digest": {
-            "task": "tasks.send_weekly_digest",
-            "schedule": crontab(hour=10, minute=0, day_of_week="sun"),
-        },
-        "category-evolution": {
-            "task": "tasks.check_category_evolution",
-            "schedule": crontab(hour=2, minute=0),
-        },
-        "update-prompts": {
-            "task": "tasks.update_classification_prompts",
-            "schedule": crontab(hour=3, minute=0),
-        },
-    },
-    enable_utc=True,
-    result_serializer="json",
-    task_serializer="json",
-    timezone="UTC",
-)
 
 
 def _safe_async_run(coro: Any) -> Any:
