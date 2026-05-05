@@ -83,6 +83,12 @@ def get_bot() -> Any:
     return _get_application().bot
 
 
+def reset_telegram_application() -> None:
+    """Drop the cached Telegram application so a new event loop gets a fresh client."""
+    global application
+    application = None
+
+
 def get_redis_client() -> Any:
     """Return a lazily initialized Redis client for bot conversation state."""
     global _redis_client

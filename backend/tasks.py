@@ -18,7 +18,15 @@ from sqlalchemy.orm import Session
 from ai.classify import classify_artifact, classify_from_transcript
 from ai.evolve import run_tier2_evolution
 from ai.transcribe import transcribe_from_r2
-from bot import MessagePayload, get_bot, get_redis_client, send_confirmation, send_error, send_subcategory_proposal
+from bot import (
+    MessagePayload,
+    get_bot,
+    get_redis_client,
+    reset_telegram_application,
+    send_confirmation,
+    send_error,
+    send_subcategory_proposal,
+)
 from config import get_env, get_int_env
 from digest import format_digest_message, get_digest_items
 from logging_config import structlog
@@ -65,7 +73,11 @@ celery.conf.update(
 
 def _safe_async_run(coro: Any) -> Any:
     """Run an async Telegram helper from the synchronous Celery task context."""
-    return asyncio.run(coro)
+    reset_telegram_application()
+    try:
+        return asyncio.run(coro)
+    finally:
+        reset_telegram_application()
 
 
 def _duration_ms(started_at: float) -> int:
@@ -181,6 +193,15 @@ async def _send_video_processed(chat_id: int, title: str, category_name: str) ->
     await get_bot().send_message(
         chat_id=chat_id,
         text=f"Video processed: {title} [{category_name}]",
+        parse_mode="Markdown",
+    )
+
+
+async def _send_weekly_digest_message(chat_id: int, message: str) -> None:
+    """Send the weekly digest from inside the active Celery event loop."""
+    await get_bot().send_message(
+        chat_id=chat_id,
+        text=message,
         parse_mode="Markdown",
     )
 
@@ -564,13 +585,7 @@ def send_weekly_digest() -> None:
             dashboard_url=dashboard_url,
         )
 
-        _safe_async_run(
-            get_bot().send_message(
-                chat_id=chat_id,
-                text=message,
-                parse_mode="Markdown",
-            )
-        )
+        _safe_async_run(_send_weekly_digest_message(chat_id, message))
 
         forgotten_ids = [artifact.id for artifact in forgotten]
         if forgotten_ids:
