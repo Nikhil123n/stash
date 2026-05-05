@@ -2,9 +2,7 @@
 
 This repo includes a free/prototype Render Blueprint at [`render.yaml`](../render.yaml) for the backend stack:
 
-- `stash-api`: FastAPI web service built from `backend/Dockerfile`
-- `stash-worker`: Celery worker built from the same image
-- `stash-beat`: Celery Beat scheduler built from the same image
+- `stash-api`: FastAPI web service built from `backend/Dockerfile`; for the free prototype it also starts Celery worker and Celery Beat inside the same container
 - `stash-postgres`: Render Postgres
 - `stash-redis`: Render Key Value, Redis-compatible
 
@@ -35,8 +33,8 @@ Review Render's MCP docs before granting an API key to any AI tool. Render API k
 3. Connect `https://github.com/Nikhil123n/stash`.
 4. Select the root `render.yaml`.
 5. Fill all `sync: false` secrets during Blueprint setup. Render requires these on each service that uses them; use the same values for repeated keys.
-6. Add the Google service account JSON as a Render Secret File named `gcp-service-account.json` for all backend services: `stash-api`, `stash-worker`, and `stash-beat`. Render mounts it at `/etc/secrets/gcp-service-account.json`.
-7. Create the Blueprint and wait for `stash-api`, `stash-worker`, `stash-beat`, `stash-postgres`, and `stash-redis`.
+6. Add the Google service account JSON as a Render Secret File named `gcp-service-account.json` for `stash-api`. Render mounts it at `/etc/secrets/gcp-service-account.json`.
+7. Create the Blueprint and wait for `stash-api`, `stash-postgres`, and `stash-redis`.
 8. After Render assigns the API URL, confirm `TELEGRAM_WEBHOOK_URL` is set to `https://<render-api-host>/webhook`.
 9. Set the frontend Vercel env var `VITE_API_URL` to the Render API base URL and redeploy the frontend.
 
@@ -48,9 +46,10 @@ This is suitable for prototype testing, not durable production:
 
 - Free Render Postgres is time-limited on Render. Move to Neon, Supabase, Railway, or a paid Render database before storing real long-term data.
 - Free Render services have low CPU/RAM and may be slow for video extraction, Whisper, and Gemini-heavy workloads.
+- Free Render does not provide separate background workers. This Blueprint runs FastAPI, one Celery worker, and Celery Beat inside the same `stash-api` service for prototype testing.
 - Free Render Key Value is small. If Celery queues grow, use Upstash Redis pay-as-you-go or upgrade Render Key Value.
 
-For a production deployment on Render, change the `plan` fields in `render.yaml` back to paid tiers deliberately and review the monthly estimate before applying.
+For a production deployment on Render, add separate paid `stash-worker` and `stash-beat` services back deliberately and review the monthly estimate before applying.
 
 ## Required Secrets
 
@@ -70,7 +69,7 @@ These values must be entered in Render and must never be committed:
 
 The non-secret runtime values live in the `stash-shared-config` environment group. `DATABASE_URL` and `REDIS_URL` are referenced directly from each service because Render does not allow services to copy reference-backed env vars from another service.
 
-Optional video extraction cookie settings are not included in the Blueprint. Add `YTDLP_COOKIES_BROWSER` or `YTDLP_COOKIES_FILE` to `stash-worker` later only if public social video extraction starts needing cookies.
+Optional video extraction cookie settings are not included in the Blueprint. Add `YTDLP_COOKIES_BROWSER` or `YTDLP_COOKIES_FILE` to `stash-api` later only if public social video extraction starts needing cookies.
 
 ## Post-Deploy Checks
 
@@ -91,6 +90,7 @@ If `/health` returns 503, fix the named dependency first. A failed `r2` check us
 ## Notes
 
 - The Blueprint intentionally uses free Render plans to avoid the multi-service starter estimate.
-- Free Render services do not support pre-deploy commands, so each backend service runs `python -m alembic upgrade head` before its normal startup command.
+- Free Render services do not support pre-deploy commands, so `stash-api` runs `python -m alembic upgrade head` before its normal startup command.
+- This free setup is a single-container prototype. If the web service sleeps or restarts, background processing pauses until the service wakes again.
 - The backend validates required environment variables during startup. Leaving any required secret blank will fail the first deploy.
 - Render's MCP server requires a broadly scoped API key. Review the Render MCP docs before granting that access to any AI tool.

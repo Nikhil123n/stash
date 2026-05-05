@@ -1,4 +1,4 @@
-# Render Blueprint for the Stash backend stack.
+# Render Blueprint for the Stash backend prototype stack.
 #
 # Create this from Render Dashboard > New > Blueprint and connect the GitHub repo.
 # Secret values marked with sync: false must be entered in Render during setup.
@@ -50,7 +50,7 @@ services:
     branch: main
     dockerfilePath: backend/Dockerfile
     dockerContext: .
-    dockerCommand: sh -c "python -m alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT"
+    dockerCommand: sh -c "python -m alembic upgrade head && (celery -A tasks worker --loglevel=info --concurrency=1 &) && (celery -A tasks beat --loglevel=info --schedule=/tmp/celerybeat-schedule &) && exec uvicorn main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /health
     plan: free
     region: oregon
@@ -86,74 +86,6 @@ services:
         sync: false
       - key: SECRET_KEY
         generateValue: true
-
-  - type: worker
-    name: stash-worker
-    runtime: docker
-    repo: https://github.com/Nikhil123n/stash
-    branch: main
-    dockerfilePath: backend/Dockerfile
-    dockerContext: .
-    dockerCommand: sh -c "python -m alembic upgrade head && celery -A tasks worker --loglevel=info --concurrency=2"
-    plan: free
-    region: oregon
-    autoDeployTrigger: commit
-    envVars:
-      - fromGroup: stash-shared-config
-      - key: DATABASE_URL
-        fromDatabase:
-          name: stash-postgres
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: stash-redis
-          property: connectionString
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: YOUR_CHAT_ID
-        sync: false
-      - key: GOOGLE_CLOUD_PROJECT
-        sync: false
-      - key: R2_ACCOUNT_ID
-        sync: false
-      - key: R2_ACCESS_KEY
-        sync: false
-      - key: R2_SECRET_KEY
-        sync: false
-      - key: R2_BUCKET_NAME
-        sync: false
-      - key: R2_BUCKET_ID
-        sync: false
-
-  - type: worker
-    name: stash-beat
-    runtime: docker
-    repo: https://github.com/Nikhil123n/stash
-    branch: main
-    dockerfilePath: backend/Dockerfile
-    dockerContext: .
-    dockerCommand: sh -c "python -m alembic upgrade head && celery -A tasks beat --loglevel=info"
-    plan: free
-    region: oregon
-    autoDeployTrigger: commit
-    envVars:
-      - fromGroup: stash-shared-config
-      - key: DATABASE_URL
-        fromDatabase:
-          name: stash-postgres
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: stash-redis
-          property: connectionString
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: YOUR_CHAT_ID
-        sync: false
-      - key: GOOGLE_CLOUD_PROJECT
-        sync: false
 
   - type: keyvalue
     name: stash-redis
