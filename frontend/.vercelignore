@@ -1,0 +1,9 @@
+# Local environment files must not be uploaded to Vercel builds.
+.env
+.env.*
+!.env.example
+
+# Local build/dependency output.
+node_modules
+dist
+dist-ssr
