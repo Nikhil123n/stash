@@ -121,7 +121,7 @@ Expected response:
 
 ## Deploying Backend to Render
 
-The backend stack can be deployed from the root `render.yaml` Blueprint. It creates the FastAPI web service, Celery worker, Celery Beat scheduler, Render Postgres, and Render Key Value.
+Deploy the backend on Render as a normal web service, not as a Blueprint. Keep the frontend on Vercel and create database/Redis resources separately.
 
 Follow the Render runbook in [docs/render-deployment.md](docs/render-deployment.md). After Render assigns the backend URL, set `VITE_API_URL` in Vercel to that API base URL and redeploy the frontend.
 

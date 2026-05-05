@@ -1,79 +1,99 @@
 # Render Backend Deployment
 
-This repo includes a free/prototype Render Blueprint at [`render.yaml`](../render.yaml) for the backend stack:
+Use normal Render resources for Stash. Do not deploy the root repo as a Render Blueprint.
 
-- `stash-api`: FastAPI web service built from `backend/Dockerfile`; for the free prototype it also starts Celery worker and Celery Beat inside the same container
-- `stash-postgres`: Render Postgres
-- `stash-redis`: Render Key Value, Redis-compatible
+The better split is:
 
-Official references:
+- Frontend: Vercel
+- Backend API: Render web service
+- Database: Render Postgres, Neon, or Supabase
+- Redis queue: Render Key Value or Upstash Redis
+- Worker and scheduler: separate worker services when you are ready for a paid production setup
 
-- Render Blueprint YAML reference: https://render.com/docs/blueprint-spec
-- Render MCP server setup: https://render.com/docs/mcp-server
-- Render CLI and Blueprint validation: https://render.com/docs/cli
-- Render coding-agent skills: https://render.com/docs/llm-support
+## Current Recommended Path
 
-## Render MCP and CLI Automation
+For a low-cost prototype, deploy only the backend API on Render and use separately created database and Redis resources.
 
-Render MCP and the Render CLI are optional automation paths. The repo does not require either one because `render.yaml` is the deployment source of truth.
+1. Delete any failed Render Blueprint stack created from this repo.
+2. Keep the existing Vercel frontend deployment.
+3. In Render, create a Postgres database, or use Neon/Supabase Postgres.
+4. In Render, create Key Value, or use Upstash Redis.
+5. In Render, create a **Web Service** for `stash-api`.
+6. Connect `https://github.com/Nikhil123n/stash`.
+7. Use Docker deployment with:
+   - Dockerfile path: `backend/Dockerfile`
+   - Docker context: `.`
+   - Health check path: `/health`
+8. Leave the Render start command empty so the Dockerfile `CMD` is used.
+9. Add backend environment variables manually.
+10. Add the Google service account JSON as a Render Secret File named `gcp-service-account.json`.
+11. Set Vercel `VITE_API_URL` to the Render backend URL and redeploy the frontend.
 
-To automate deployment from an agent or terminal:
+## Backend Environment
 
-1. Create a Render API key from the Render Dashboard.
-2. Configure Render's hosted MCP server for Codex, or install the Render CLI.
-3. Run `render skills install` if you want Render's agent skills.
-4. Run `render blueprints validate render.yaml` before creating or syncing the Blueprint.
+Set these on the Render `stash-api` web service:
 
-Review Render's MCP docs before granting an API key to any AI tool. Render API keys are broadly scoped.
+- `DATABASE_URL`: database connection string
+- `REDIS_URL`: Redis or Render Key Value connection string
+- `TELEGRAM_BOT_TOKEN`: Telegram bot token
+- `TELEGRAM_WEBHOOK_URL`: `https://<render-api-host>/webhook`
+- `YOUR_CHAT_ID`: Telegram chat ID
+- `GOOGLE_CLOUD_PROJECT`: Vertex AI project ID
+- `GOOGLE_APPLICATION_CREDENTIALS`: `/etc/secrets/gcp-service-account.json`
+- `VERTEX_REGION`: `us-central1`
+- `GEMINI_MODEL`: `gemini-2.5-flash`
+- `GEMINI_VIDEO_MODEL`: `gemini-2.5-pro`
+- `GEMINI_INLINE_VIDEO_MAX_BYTES`: `18000000`
+- `R2_ACCOUNT_ID`: Cloudflare R2 account ID
+- `R2_ACCESS_KEY`: Cloudflare R2 access key
+- `R2_SECRET_KEY`: Cloudflare R2 secret key
+- `R2_BUCKET_NAME`: Cloudflare R2 bucket name
+- `R2_BUCKET_ID`: Cloudflare R2 public bucket ID
+- `SECRET_KEY`: long random JWT signing secret
+- `DASHBOARD_URL`: `https://stash-two-zeta.vercel.app`
+- `CORS_ORIGINS`: `https://stash-two-zeta.vercel.app`
+- `SKIP_AUTH`: `false`
+- `VIDEO_URL_ANALYSIS_ENABLED`: `true`
+- `VIDEO_URL_MAX_BYTES`: `18000000`
+- `VIDEO_URL_MAX_DURATION_SECONDS`: `180`
+- `VIDEO_URL_DOWNLOAD_FORMAT`: `bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]/best`
+- `YTDLP_SOCKET_TIMEOUT_SECONDS`: `15`
+- `YTDLP_RETRIES`: `2`
+- `YTDLP_FRAGMENT_RETRIES`: `2`
+- `WHISPER_MODEL`: `base`
+- `WHISPER_MIN_AVAILABLE_MEMORY_BYTES`: `838860800`
+- `STASH_TMP_DIR`: `/tmp`
+- `RUN_MIGRATIONS_ON_START`: `true` for the first deploy, then `false` after migrations succeed
 
-## Deploy With Blueprint
+## Worker Reality
 
-1. Push the repo to GitHub.
-2. In Render, choose **New > Blueprint**.
-3. Connect `https://github.com/Nikhil123n/stash`.
-4. Select the root `render.yaml`.
-5. Fill all `sync: false` secrets during Blueprint setup. Render requires these on each service that uses them; use the same values for repeated keys.
-6. Add the Google service account JSON as a Render Secret File named `gcp-service-account.json` for `stash-api`. Render mounts it at `/etc/secrets/gcp-service-account.json`.
-7. Create the Blueprint and wait for `stash-api`, `stash-postgres`, and `stash-redis`.
-8. After Render assigns the API URL, confirm `TELEGRAM_WEBHOOK_URL` is set to `https://<render-api-host>/webhook`.
-9. Set the frontend Vercel env var `VITE_API_URL` to the Render API base URL and redeploy the frontend.
+Stash uses Celery for Telegram artifact processing. The clean production setup is:
 
-## Cost Profile
+- `stash-api`: Render web service
+- `stash-worker`: Render background worker running `celery -A tasks worker --loglevel=info --concurrency=2`
+- `stash-beat`: Render background worker running `celery -A tasks beat --loglevel=info`
 
-The default Blueprint uses Render's free service, Postgres, and Key Value plans so the initial estimate should be `$0/month`.
+Render free plans do not support background workers. If you only deploy `stash-api` on Render free, webhook requests can enqueue jobs, but nothing will process the queue unless a worker is running somewhere.
 
-This is suitable for prototype testing, not durable production:
+For prototype testing, run the worker locally against the deployed `REDIS_URL` and `DATABASE_URL`:
 
-- Free Render Postgres is time-limited on Render. Move to Neon, Supabase, Railway, or a paid Render database before storing real long-term data.
-- Free Render services have low CPU/RAM and may be slow for video extraction, Whisper, and Gemini-heavy workloads.
-- Free Render does not provide separate background workers. This Blueprint runs FastAPI, one Celery worker, and Celery Beat inside the same `stash-api` service for prototype testing.
-- Free Render Key Value is small. If Celery queues grow, use Upstash Redis pay-as-you-go or upgrade Render Key Value.
+```bash
+cd backend
+celery -A tasks worker --loglevel=info --concurrency=1
+```
 
-For a production deployment on Render, add separate paid `stash-worker` and `stash-beat` services back deliberately and review the monthly estimate before applying.
+Run Beat locally only when you need scheduled digest/category evolution jobs:
 
-## Required Secrets
+```bash
+cd backend
+celery -A tasks beat --loglevel=info
+```
 
-These values must be entered in Render and must never be committed:
-
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_WEBHOOK_URL`
-- `YOUR_CHAT_ID`
-- `GOOGLE_CLOUD_PROJECT`
-- `R2_ACCOUNT_ID`
-- `R2_ACCESS_KEY`
-- `R2_SECRET_KEY`
-- `R2_BUCKET_NAME`
-- `R2_BUCKET_ID`
-
-`SECRET_KEY` is generated by Render in the Blueprint. `DATABASE_URL` and `REDIS_URL` are linked from the managed Render services.
-
-The non-secret runtime values live in the `stash-shared-config` environment group. `DATABASE_URL` and `REDIS_URL` are referenced directly from each service because Render does not allow services to copy reference-backed env vars from another service.
-
-Optional video extraction cookie settings are not included in the Blueprint. Add `YTDLP_COOKIES_BROWSER` or `YTDLP_COOKIES_FILE` to `stash-api` later only if public social video extraction starts needing cookies.
+For production, use paid Render worker services or move workers to another host that supports long-running background processes.
 
 ## Post-Deploy Checks
 
-Run these checks after the deploy finishes:
+After deployment, run:
 
 ```bash
 curl https://<render-api-host>/health
@@ -86,11 +106,3 @@ Expected healthy response:
 ```
 
 If `/health` returns 503, fix the named dependency first. A failed `r2` check usually means the R2 bucket name or credentials are wrong.
-
-## Notes
-
-- The Blueprint intentionally uses free Render plans to avoid the multi-service starter estimate.
-- Free Render services do not support pre-deploy commands, so `stash-api` runs `python -m alembic upgrade head` before its normal startup command.
-- This free setup is a single-container prototype. If the web service sleeps or restarts, background processing pauses until the service wakes again.
-- The backend validates required environment variables during startup. Leaving any required secret blank will fail the first deploy.
-- Render's MCP server requires a broadly scoped API key. Review the Render MCP docs before granting that access to any AI tool.

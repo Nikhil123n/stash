@@ -35,4 +35,4 @@ COPY --chown=stash:stash backend/ .
 
 USER stash
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "if [ \"${RUN_MIGRATIONS_ON_START:-false}\" = \"true\" ]; then python -m alembic upgrade head; fi; exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
