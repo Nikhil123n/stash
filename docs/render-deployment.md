@@ -91,6 +91,6 @@ If `/health` returns 503, fix the named dependency first. A failed `r2` check us
 ## Notes
 
 - The Blueprint intentionally uses free Render plans to avoid the multi-service starter estimate.
-- The web service runs `python -m alembic upgrade head` as a pre-deploy command.
+- Free Render services do not support pre-deploy commands, so each backend service runs `python -m alembic upgrade head` before its normal startup command.
 - The backend validates required environment variables during startup. Leaving any required secret blank will fail the first deploy.
 - Render's MCP server requires a broadly scoped API key. Review the Render MCP docs before granting that access to any AI tool.

@@ -50,13 +50,11 @@ services:
     branch: main
     dockerfilePath: backend/Dockerfile
     dockerContext: .
-    dockerCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    preDeployCommand: python -m alembic upgrade head
+    dockerCommand: sh -c "python -m alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /health
     plan: free
     region: oregon
     autoDeployTrigger: commit
-    maxShutdownDelaySeconds: 120
     envVars:
       - fromGroup: stash-shared-config
       - key: DATABASE_URL
@@ -96,11 +94,10 @@ services:
     branch: main
     dockerfilePath: backend/Dockerfile
     dockerContext: .
-    dockerCommand: celery -A tasks worker --loglevel=info --concurrency=2
+    dockerCommand: sh -c "python -m alembic upgrade head && celery -A tasks worker --loglevel=info --concurrency=2"
     plan: free
     region: oregon
     autoDeployTrigger: commit
-    maxShutdownDelaySeconds: 300
     envVars:
       - fromGroup: stash-shared-config
       - key: DATABASE_URL
@@ -136,11 +133,10 @@ services:
     branch: main
     dockerfilePath: backend/Dockerfile
     dockerContext: .
-    dockerCommand: celery -A tasks beat --loglevel=info
+    dockerCommand: sh -c "python -m alembic upgrade head && celery -A tasks beat --loglevel=info"
     plan: free
     region: oregon
     autoDeployTrigger: commit
-    maxShutdownDelaySeconds: 120
     envVars:
       - fromGroup: stash-shared-config
       - key: DATABASE_URL
