@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+.env.*
+tests/
+.git/
+.pytest_cache/
+alembic/__pycache__/
+ai/__pycache__/
+api/__pycache__/
+storage/__pycache__/

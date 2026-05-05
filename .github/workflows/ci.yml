@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || 'test-token' }}
+      TELEGRAM_WEBHOOK_URL: ${{ secrets.TELEGRAM_WEBHOOK_URL || 'https://example.com/webhook' }}
+      GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || 'test-project' }}
+      VERTEX_REGION: ${{ secrets.VERTEX_REGION || 'us-central1' }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql+psycopg2://stash:stash@localhost:5432/stash' }}
+      REDIS_URL: ${{ secrets.REDIS_URL || 'redis://localhost:6379/0' }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || 'test-account' }}
+      R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY || 'test-access-key' }}
+      R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY || 'test-secret-key' }}
+      R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || 'test-bucket' }}
+      R2_BUCKET_ID: ${{ secrets.R2_BUCKET_ID || 'test-bucket-id' }}
+      SECRET_KEY: ${{ secrets.SECRET_KEY || 'test-secret-key-for-ci-only' }}
+      DASHBOARD_URL: ${{ secrets.DASHBOARD_URL || 'http://localhost:5173' }}
+      CORS_ORIGINS: ${{ secrets.CORS_ORIGINS || 'http://localhost:5173' }}
+      YOUR_CHAT_ID: ${{ secrets.YOUR_CHAT_ID || '123456' }}
+      GEMINI_MODEL: ${{ secrets.GEMINI_MODEL || 'gemini-2.5-flash' }}
+      WHISPER_MODEL: ${{ secrets.WHISPER_MODEL || 'base' }}
+      WHISPER_MIN_AVAILABLE_MEMORY_BYTES: "838860800"
+      STASH_TMP_DIR: /tmp
+      SKIP_AUTH: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest pytest-cov
+
+      - name: Run backend tests
+        run: pytest tests/ --cov=. --cov-report=term-missing
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      VITE_API_URL: http://localhost:8000
+      VITE_SKIP_AUTH: "true"
+      VITE_TELEGRAM_BOT_NAME: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Build frontend
+        run: npm run build

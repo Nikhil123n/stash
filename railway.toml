@@ -1,0 +1,17 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "backend/Dockerfile"
+
+[services.web]
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+
+[services.worker]
+startCommand = "celery -A tasks worker --loglevel=info --concurrency=2"
+restartPolicyType = "on_failure"
+
+[services.beat]
+startCommand = "celery -A tasks beat --loglevel=info"
+restartPolicyType = "on_failure"
