@@ -1,6 +1,7 @@
 """Pydantic response and request schemas for the Stash REST API."""
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -60,6 +61,7 @@ class ArtifactDetail(ArtifactOut):
     """Detailed artifact representation including transcript text."""
 
     ai_transcript: str | None
+    ai_audit: dict[str, Any] | None
 
 
 class ArtifactPage(BaseModel):

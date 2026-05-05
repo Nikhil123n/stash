@@ -29,6 +29,14 @@ jobs:
       CORS_ORIGINS: ${{ secrets.CORS_ORIGINS || 'http://localhost:5173' }}
       YOUR_CHAT_ID: ${{ secrets.YOUR_CHAT_ID || '123456' }}
       GEMINI_MODEL: ${{ secrets.GEMINI_MODEL || 'gemini-2.5-flash' }}
+      GEMINI_VIDEO_MODEL: ${{ secrets.GEMINI_VIDEO_MODEL || 'gemini-2.5-pro' }}
+      GEMINI_INLINE_VIDEO_MAX_BYTES: "18000000"
+      VIDEO_URL_ANALYSIS_ENABLED: "true"
+      VIDEO_URL_MAX_BYTES: "18000000"
+      VIDEO_URL_MAX_DURATION_SECONDS: "180"
+      YTDLP_SOCKET_TIMEOUT_SECONDS: "15"
+      YTDLP_RETRIES: "2"
+      YTDLP_FRAGMENT_RETRIES: "2"
       WHISPER_MODEL: ${{ secrets.WHISPER_MODEL || 'base' }}
       WHISPER_MIN_AVAILABLE_MEMORY_BYTES: "838860800"
       STASH_TMP_DIR: /tmp

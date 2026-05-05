@@ -2,7 +2,8 @@
 
 import re
 from collections.abc import Generator
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
@@ -20,10 +21,14 @@ from sqlalchemy import (
     select,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, TSVECTOR, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 from config import get_env
+from logging_config import structlog
+
+
+logger = structlog.get_logger(__name__)
 
 
 def _normalize_database_url(database_url: str) -> str:
@@ -134,6 +139,7 @@ class Artifact(Base):
     ai_tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
     ai_transcript: Mapped[str | None] = mapped_column(Text)
     ai_confidence: Mapped[float | None] = mapped_column(Float)
+    ai_audit: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     category_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("categories.id"))
     subcategory_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("subcategories.id"))
     user_overridden: Mapped[bool | None] = mapped_column(Boolean, server_default=text("false"))
@@ -202,6 +208,90 @@ class PromptExample(Base):
     content_text: Mapped[str] = mapped_column(Text, nullable=False)
     correct_category: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+
+
+class LLMModelState(Base):
+    """Last-seen model value used to detect model changes across worker runs."""
+
+    __tablename__ = "llm_model_state"
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+
+
+class ModelChangeEvent(Base):
+    """Audit event written when the configured Gemini model changes."""
+
+    __tablename__ = "model_change_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    old_model: Mapped[str | None] = mapped_column(Text)
+    new_model: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+
+
+Index("model_change_events_created_idx", ModelChangeEvent.created_at.desc())
+
+
+_GEMINI_MODEL_STATE_KEY = "gemini_model"
+
+
+def record_model_change_if_needed(
+    db: Session,
+    current_model: str,
+    *,
+    commit: bool = False,
+) -> None:
+    """Persist a warning event when GEMINI_MODEL differs from the last recorded run."""
+    clean_model = current_model.strip()
+    if not clean_model:
+        return
+
+    now = datetime.now(UTC)
+    state = db.get(LLMModelState, _GEMINI_MODEL_STATE_KEY)
+    if state is None:
+        db.add(
+            LLMModelState(
+                name=_GEMINI_MODEL_STATE_KEY,
+                model_name=clean_model,
+                updated_at=now,
+            )
+        )
+        logger.info("gemini_model_state_initialized", model_name=clean_model, duration_ms=0)
+        if commit:
+            db.commit()
+        else:
+            db.flush()
+        return
+
+    if state.model_name == clean_model:
+        return
+
+    old_model = state.model_name
+    db.add(
+        ModelChangeEvent(
+            old_model=old_model,
+            new_model=clean_model,
+            created_at=now,
+        )
+    )
+    state.model_name = clean_model
+    state.updated_at = now
+    logger.warning(
+        "gemini_model_changed",
+        old_model=old_model,
+        new_model=clean_model,
+        duration_ms=0,
+    )
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
 
 def get_db() -> Generator[Session, None, None]:

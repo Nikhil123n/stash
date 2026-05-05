@@ -13,9 +13,19 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 from vertexai.generative_models import GenerativeModel
 
+from ai.consistency import (
+    LLM_RETRY_ATTEMPTS,
+    TAXONOMY_CLUSTERING_PROMPT_VERSION,
+    TAXONOMY_EVOLUTION_GENERATION_CONFIG,
+    TAXONOMY_PARSER_VERSION,
+    TAXONOMY_RESPONSE_SCHEMA,
+    TAXONOMY_RESPONSE_SCHEMA_VERSION,
+    generate_content_with_policy,
+    prompt_metadata,
+)
 from config import get_env
 from logging_config import structlog
-from storage.db import Artifact, Category, Subcategory
+from storage.db import Artifact, Category, Subcategory, record_model_change_if_needed
 
 logger = structlog.get_logger(__name__)
 
@@ -104,9 +114,45 @@ def _generate_clustering_response(prompt: str) -> list[dict[str, Any]]:
     """Run Gemini against a clustering prompt and parse its response."""
     _initialize_vertexai()
     model = GenerativeModel(_MODEL_NAME)
-    response = model.generate_content(prompt)
-    raw_response = getattr(response, "text", "")
-    return parse_clustering_response(raw_response)
+    prompt_info = prompt_metadata(prompt, TAXONOMY_CLUSTERING_PROMPT_VERSION)
+    raw_response = ""
+    last_parse_error: ValueError | None = None
+
+    for attempt in range(1, LLM_RETRY_ATTEMPTS + 1):
+        response, call_policy = generate_content_with_policy(
+            model,
+            prompt,
+            generation_config=TAXONOMY_EVOLUTION_GENERATION_CONFIG,
+            response_schema=TAXONOMY_RESPONSE_SCHEMA,
+            response_schema_version=TAXONOMY_RESPONSE_SCHEMA_VERSION,
+        )
+        raw_response = getattr(response, "text", "")
+        try:
+            proposals = parse_clustering_response(raw_response)
+        except ValueError as exc:
+            last_parse_error = exc
+            logger.warning(
+                "gemini_taxonomy_invalid_response",
+                attempt=attempt,
+                max_attempts=LLM_RETRY_ATTEMPTS,
+                raw_response=raw_response,
+                duration_ms=0,
+            )
+            continue
+
+        logger.debug(
+            "gemini_taxonomy_audit",
+            model_name=_MODEL_NAME,
+            prompt_version=prompt_info.version,
+            prompt_hash=prompt_info.prompt_hash,
+            generation_config=call_policy.generation_config,
+            parser_version=TAXONOMY_PARSER_VERSION,
+            retry_count=attempt - 1,
+            duration_ms=0,
+        )
+        return proposals
+
+    raise ValueError(f"Invalid Gemini taxonomy response: {raw_response}") from last_parse_error
 
 
 def _artifact_items(artifacts: list[Artifact]) -> list[dict[str, Any]]:
@@ -156,6 +202,7 @@ def run_tier2_evolution(db: Session, category_id: UUID) -> list[dict[str, Any]] 
     if len(artifacts) < _TIER2_MIN_ITEMS:
         return None
 
+    record_model_change_if_needed(db, _MODEL_NAME, commit=True)
     prompt = build_clustering_prompt(category.name, _artifact_items(artifacts))
     try:
         proposals = _generate_clustering_response(prompt)
@@ -185,6 +232,7 @@ def run_tier3_evolution(db: Session, subcategory_id: UUID) -> None:
     if len(artifacts) < _TIER3_MIN_ITEMS:
         return
 
+    record_model_change_if_needed(db, _MODEL_NAME, commit=True)
     prompt = build_clustering_prompt(subcategory.name, _artifact_items(artifacts))
     try:
         proposals = _generate_clustering_response(prompt)

@@ -25,19 +25,29 @@ class FakePart:
         return data, mime_type
 
 
+class FakeGenerationConfig(dict):
+    """Dictionary-backed stand-in for Vertex GenerationConfig."""
+
+
 class FakeGenerativeModel:
     """Minimal Vertex GenerativeModel stand-in with configurable response text."""
 
     response_text: str = "{}"
+    response_texts: list[str] = []
     generate_content_mock = Mock()
 
     def __init__(self, model_name: str) -> None:
         self.model_name = model_name
 
-    def generate_content(self, prompt_or_parts: object) -> SimpleNamespace:
+    def generate_content(self, prompt_or_parts: object, **kwargs: object) -> SimpleNamespace:
         """Return a fake Gemini response."""
-        self.__class__.generate_content_mock(prompt_or_parts)
-        return SimpleNamespace(text=self.__class__.response_text)
+        self.__class__.generate_content_mock(prompt_or_parts, **kwargs)
+        response_text = (
+            self.__class__.response_texts.pop(0)
+            if self.__class__.response_texts
+            else self.__class__.response_text
+        )
+        return SimpleNamespace(text=response_text)
 
 
 def import_classify_with_fake_vertex(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
@@ -47,12 +57,15 @@ def import_classify_with_fake_vertex(monkeypatch: pytest.MonkeyPatch) -> types.M
 
     fake_models = types.ModuleType("vertexai.generative_models")
     fake_models.GenerativeModel = FakeGenerativeModel
+    fake_models.GenerationConfig = FakeGenerationConfig
     fake_models.Part = FakePart
 
     monkeypatch.setitem(sys.modules, "vertexai", fake_vertexai)
     monkeypatch.setitem(sys.modules, "vertexai.generative_models", fake_models)
     sys.modules.pop("ai.classify", None)
+    sys.modules.pop("ai.consistency", None)
     FakeGenerativeModel.generate_content_mock.reset_mock()
+    FakeGenerativeModel.response_texts = []
     return importlib.import_module("ai.classify")
 
 
@@ -74,7 +87,7 @@ def test_valid_classification(monkeypatch: pytest.MonkeyPatch) -> None:
 
     result = classify.classify_text("Telegram webhook implementation notes", ["Coding", "Design"])
 
-    assert result == {
+    expected = {
         "title": "FastAPI Webhooks",
         "summary": "A practical note about receiving Telegram webhooks.",
         "tags": ["fastapi", "telegram", "backend"],
@@ -83,7 +96,18 @@ def test_valid_classification(monkeypatch: pytest.MonkeyPatch) -> None:
         "confidence": 0.91,
         "needs_review": False,
     }
+    assert {key: result[key] for key in expected} == expected
+    assert result["ai_audit"]["prompt_version"] == classify.CLASSIFICATION_PROMPT_VERSION
+    assert result["ai_audit"]["generation_config"]["temperature"] == 0
+    assert result["ai_audit"]["generation_config"]["top_p"] == 1
+    assert result["ai_audit"]["generation_config"]["candidate_count"] == 1
+    assert result["ai_audit"]["generation_config"]["max_output_tokens"] == 1024
+    assert result["ai_audit"]["generation_config"]["response_mime_type"] == "application/json"
+    assert result["ai_audit"]["generation_config"]["response_schema_enforced"] is True
     FakeGenerativeModel.generate_content_mock.assert_called_once()
+    generation_config = FakeGenerativeModel.generate_content_mock.call_args.kwargs["generation_config"]
+    assert generation_config["response_mime_type"] == "application/json"
+    assert "response_schema" in generation_config
 
 
 def test_json_parse_error_raises_classification_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -93,6 +117,31 @@ def test_json_parse_error_raises_classification_error(monkeypatch: pytest.Monkey
 
     with pytest.raises(classify.ClassificationError):
         classify.classify_text("bad response example", ["Coding"])
+    assert FakeGenerativeModel.generate_content_mock.call_count == 3
+
+
+def test_invalid_response_retries_until_valid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Classifier retries invalid model JSON before returning a valid later response."""
+    classify = import_classify_with_fake_vertex(monkeypatch)
+    FakeGenerativeModel.response_texts = [
+        "not-json",
+        """
+        {
+          "title": "Retry Success",
+          "summary": "The second response is valid JSON.",
+          "tags": ["retry", "json"],
+          "category": "Coding",
+          "is_new_category": false,
+          "confidence": 0.8
+        }
+        """,
+    ]
+
+    result = classify.classify_text("retry example", ["Coding"])
+
+    assert result["category"] == "Coding"
+    assert result["ai_audit"]["retry_count"] == 1
+    assert FakeGenerativeModel.generate_content_mock.call_count == 2
 
 
 def test_new_category_creation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,3 +214,35 @@ def test_url_classification_uses_extracted_page_content(monkeypatch: pytest.Monk
     assert "Extracted page content" in prompt
     assert "sourdough fermentation" in prompt
     assert "Classify the substance" in prompt
+
+
+def test_video_url_classification_uses_video_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Video URL classification sends the actual video bytes to Gemini."""
+    classify = import_classify_with_fake_vertex(monkeypatch)
+    FakeGenerativeModel.response_text = """
+    {
+      "title": "Desk Setup Reel",
+      "summary": "A short reel showing a compact productivity desk setup.",
+      "tags": ["desk setup", "productivity", "workspace", "lighting"],
+      "category": "Productivity",
+      "is_new_category": false,
+      "confidence": 0.95,
+      "content_details": "Shows a laptop stand, monitor light, keyboard, and cable management."
+    }
+    """
+
+    result = classify.classify_url(
+        og_title="Instagram reel",
+        og_description="Desk vibes",
+        url="https://www.instagram.com/reel/example",
+        existing_categories=["Productivity"],
+        is_video=True,
+        video_bytes=b"fake-video",
+        video_mime_type="video/mp4",
+    )
+    prompt_or_parts = FakeGenerativeModel.generate_content_mock.call_args.args[0]
+
+    assert result["category"] == "Productivity"
+    assert result["content_details"].startswith("Shows a laptop stand")
+    assert prompt_or_parts[0] == (b"fake-video", "video/mp4")
+    assert "The video content is the source of truth" in prompt_or_parts[1]

@@ -81,4 +81,8 @@ def artifact_to_out(artifact: Artifact) -> ArtifactOut:
 def artifact_to_detail(artifact: Artifact) -> ArtifactDetail:
     """Serialize an Artifact model for detail responses."""
     base = artifact_to_out(artifact)
-    return ArtifactDetail(**base.model_dump(), ai_transcript=artifact.ai_transcript)
+    return ArtifactDetail(
+        **base.model_dump(),
+        ai_transcript=artifact.ai_transcript,
+        ai_audit=getattr(artifact, "ai_audit", None),
+    )

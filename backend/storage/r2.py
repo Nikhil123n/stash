@@ -4,18 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import re
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
-from config import get_env
+from config import get_bool_env, get_env, get_int_env
 from logging_config import structlog
 logger = structlog.get_logger(__name__)
 
 _r2_client: Any | None = None
 _MAX_EXTRACTED_TEXT_CHARS = 12000
+_DEFAULT_VIDEO_DOWNLOAD_FORMAT = (
+    "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/"
+    "best[ext=mp4][height<=720]/best[height<=720]/best"
+)
 _VIDEO_DOMAINS = (
     "youtube.com",
     "youtu.be",
@@ -357,7 +365,162 @@ def _fetch_caption_track_text(info: dict[str, Any]) -> str | None:
     return None
 
 
-def _fetch_video_provider_metadata(url: str) -> dict[str, str | None]:
+def _yt_dlp_base_options(logger_adapter: object) -> dict[str, Any]:
+    """Return shared yt-dlp options for public metadata and video downloads."""
+    options: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "logger": logger_adapter,
+        "noplaylist": True,
+        "socket_timeout": get_int_env("YTDLP_SOCKET_TIMEOUT_SECONDS", 15),
+        "retries": get_int_env("YTDLP_RETRIES", 2),
+        "fragment_retries": get_int_env("YTDLP_FRAGMENT_RETRIES", 2),
+    }
+    cookie_file = get_env("YTDLP_COOKIES_FILE") or get_env("YTDLP_COOKIES_PATH")
+    cookies_browser = get_env("YTDLP_COOKIES_BROWSER")
+    if cookie_file:
+        options["cookiefile"] = cookie_file
+    elif cookies_browser:
+        options["cookiesfrombrowser"] = (cookies_browser,)
+    return options
+
+
+def _coerce_single_video_info(info: Any) -> dict[str, Any]:
+    """Return the first video info object from a yt-dlp response."""
+    if not isinstance(info, dict):
+        return {}
+    entries = info.get("entries")
+    if isinstance(entries, list) and entries:
+        first_entry = entries[0]
+        return first_entry if isinstance(first_entry, dict) else {}
+    return info
+
+
+def _video_info_within_limits(info: dict[str, Any]) -> bool:
+    """Return whether a candidate social video is small enough for inline Gemini analysis."""
+    max_duration_seconds = get_int_env("VIDEO_URL_MAX_DURATION_SECONDS", 180)
+    duration = info.get("duration")
+    if isinstance(duration, (int, float)) and duration > max_duration_seconds:
+        logger.info(
+            "video_url_analysis_skipped_duration",
+            duration_seconds=duration,
+            max_duration_seconds=max_duration_seconds,
+            duration_ms=0,
+        )
+        return False
+
+    max_bytes = get_int_env("VIDEO_URL_MAX_BYTES", 18_000_000)
+    for key in ("filesize", "filesize_approx"):
+        size = info.get(key)
+        if isinstance(size, int) and size > max_bytes:
+            logger.info(
+                "video_url_analysis_skipped_size",
+                size_bytes=size,
+                max_bytes=max_bytes,
+                duration_ms=0,
+            )
+            return False
+
+    return True
+
+
+def _downloaded_video_path(tmp_dir: Path, info: dict[str, Any]) -> Path | None:
+    """Find the final downloaded video path from yt-dlp metadata or temp files."""
+    requested_downloads = info.get("requested_downloads")
+    if isinstance(requested_downloads, list):
+        for download in requested_downloads:
+            if not isinstance(download, dict):
+                continue
+            filepath = download.get("filepath")
+            if isinstance(filepath, str) and Path(filepath).exists():
+                return Path(filepath)
+
+    candidates = [path for path in tmp_dir.iterdir() if path.is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_size)
+
+
+def _video_mime_type(path: Path, info: dict[str, Any]) -> str:
+    """Infer a video MIME type from yt-dlp metadata or the downloaded filename."""
+    mime_type = info.get("mime_type")
+    if isinstance(mime_type, str) and mime_type.startswith("video/"):
+        return mime_type
+
+    extension = str(info.get("ext") or path.suffix.removeprefix(".")).lower()
+    if extension == "mov":
+        return "video/quicktime"
+    guessed, _encoding = mimetypes.guess_type(f"video.{extension}" if extension else str(path))
+    return guessed if guessed and guessed.startswith("video/") else "video/mp4"
+
+
+def _download_video_for_analysis(url: str, logger_adapter: object) -> dict[str, Any]:
+    """Download a bounded public social video for multimodal Gemini analysis."""
+    if not get_bool_env("VIDEO_URL_ANALYSIS_ENABLED", True):
+        return {}
+
+    try:
+        import yt_dlp
+    except ImportError:
+        logger.info("video_url_analysis_skipped_missing_ytdlp", url=url, duration_ms=0)
+        return {}
+
+    max_bytes = get_int_env("VIDEO_URL_MAX_BYTES", 18_000_000)
+    tmp_parent_value = get_env("STASH_TMP_DIR")
+    tmp_parent = Path(tmp_parent_value) if tmp_parent_value else None
+    if tmp_parent is not None:
+        tmp_parent.mkdir(parents=True, exist_ok=True)
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="stash-video-", dir=tmp_parent))
+    try:
+        options = _yt_dlp_base_options(logger_adapter)
+        options.update(
+            {
+                "format": get_env("VIDEO_URL_DOWNLOAD_FORMAT", _DEFAULT_VIDEO_DOWNLOAD_FORMAT),
+                "max_filesize": max_bytes,
+                "outtmpl": str(tmp_dir / "video.%(ext)s"),
+                "merge_output_format": "mp4",
+            }
+        )
+
+        try:
+            with yt_dlp.YoutubeDL(options) as downloader:
+                info = _coerce_single_video_info(downloader.extract_info(url, download=True))
+        except Exception:
+            logger.warning("video_url_download_failed", url=url, duration_ms=0)
+            return {}
+
+        downloaded_path = _downloaded_video_path(tmp_dir, info)
+        if downloaded_path is None:
+            logger.warning("video_url_download_missing_file", url=url, duration_ms=0)
+            return {}
+
+        size_bytes = downloaded_path.stat().st_size
+        if size_bytes > max_bytes:
+            logger.info(
+                "video_url_analysis_skipped_downloaded_size",
+                url=url,
+                size_bytes=size_bytes,
+                max_bytes=max_bytes,
+                duration_ms=0,
+            )
+            return {}
+
+        video_bytes = downloaded_path.read_bytes()
+        if not video_bytes:
+            return {}
+
+        return {
+            "video_bytes": video_bytes,
+            "video_mime_type": _video_mime_type(downloaded_path, info),
+            "video_duration_seconds": str(info.get("duration") or ""),
+            "video_source": "yt-dlp",
+        }
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _fetch_video_provider_metadata(url: str) -> dict[str, Any]:
     """Use optional yt-dlp support to fetch public video title, description, and captions."""
     try:
         import yt_dlp
@@ -381,22 +544,10 @@ def _fetch_video_provider_metadata(url: str) -> dict[str, str | None]:
             logger.warning("video_provider_metadata_error", url=url, message=message, duration_ms=0)
 
     try:
-        options = {
-            "quiet": True,
-            "no_warnings": True,
-            "logger": _YtDlpLogger(),
-            "skip_download": True,
-            "noplaylist": True,
-            "socket_timeout": 15,
-        }
-        cookie_file = get_env("YTDLP_COOKIES_FILE") or get_env("YTDLP_COOKIES_PATH")
-        cookies_browser = get_env("YTDLP_COOKIES_BROWSER")
-        if cookie_file:
-            options["cookiefile"] = cookie_file
-        elif cookies_browser:
-            options["cookiesfrombrowser"] = (cookies_browser,)
+        options = _yt_dlp_base_options(_YtDlpLogger())
+        options["skip_download"] = True
         with yt_dlp.YoutubeDL(options) as downloader:
-            info = downloader.extract_info(url, download=False)
+            info = _coerce_single_video_info(downloader.extract_info(url, download=False))
     except Exception:
         logger.warning("video_provider_metadata_fetch_failed", url=url, duration_ms=0)
         return {}
@@ -418,6 +569,7 @@ def _fetch_video_provider_metadata(url: str) -> dict[str, str | None]:
         f"Video description:\n{description}" if isinstance(description, str) and description.strip() else "",
     ]
     content_text = "\n".join(part for part in lines if part)[:_MAX_EXTRACTED_TEXT_CHARS]
+    video_download = _download_video_for_analysis(url, _YtDlpLogger()) if _video_info_within_limits(info) else {}
 
     return {
         "title": title.strip() if isinstance(title, str) and title.strip() else None,
@@ -427,12 +579,13 @@ def _fetch_video_provider_metadata(url: str) -> dict[str, str | None]:
         "resolved_url": webpage_url.strip() if isinstance(webpage_url, str) and webpage_url.strip() else None,
         "site_name": uploader.strip() if isinstance(uploader, str) and uploader.strip() else None,
         "video_url": webpage_url.strip() if isinstance(webpage_url, str) and webpage_url.strip() else None,
+        **video_download,
     }
 
 
-def fetch_og_metadata(url: str) -> dict[str, str | None]:
+def fetch_og_metadata(url: str) -> dict[str, Any]:
     """Fetch URL metadata and readable page text with a safe fallback on errors."""
-    fallback: dict[str, str | None] = {
+    fallback: dict[str, Any] = {
         "title": url,
         "description": None,
         "image_url": None,

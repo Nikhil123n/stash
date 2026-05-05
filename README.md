@@ -63,13 +63,16 @@ Required production variables:
 - `DASHBOARD_URL`: Public frontend URL used in digest messages.
 - `CORS_ORIGINS`: Comma-separated dashboard origins allowed to call the API.
 - `GEMINI_MODEL`: Vertex AI Gemini model used for classification.
+- `GEMINI_VIDEO_MODEL`: Vertex AI Gemini model used when real video bytes are available.
+- `GEMINI_INLINE_VIDEO_MAX_BYTES`: Maximum Telegram-uploaded video size sent inline to Gemini.
 
 Local-only helpers:
 
 - `SKIP_AUTH=true` disables dashboard auth locally.
 - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` configure the local Compose database.
 - `WHISPER_MODEL`, `WHISPER_MIN_AVAILABLE_MEMORY_BYTES`, and `STASH_TMP_DIR` configure local video transcription.
-- `YTDLP_COOKIES_BROWSER` or `YTDLP_COOKIES_FILE` can be set when public video metadata extraction needs cookies.
+- `VIDEO_URL_ANALYSIS_ENABLED`, `VIDEO_URL_MAX_BYTES`, `VIDEO_URL_MAX_DURATION_SECONDS`, and `VIDEO_URL_DOWNLOAD_FORMAT` control social/reel URL video downloads for Gemini analysis.
+- `YTDLP_COOKIES_BROWSER` or `YTDLP_COOKIES_FILE` can be set when public video extraction needs cookies.
 
 Frontend variables live in `frontend/.env`.
 

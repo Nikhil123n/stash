@@ -4,12 +4,27 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 from urllib.parse import urlparse
 
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 
+from ai.consistency import (
+    CLASSIFICATION_GENERATION_CONFIG,
+    CLASSIFICATION_PARSER_VERSION,
+    CLASSIFICATION_PROMPT_VERSION,
+    CLASSIFICATION_RESPONSE_SCHEMA,
+    CLASSIFICATION_RESPONSE_SCHEMA_VERSION,
+    IMAGE_ANALYSIS_GENERATION_CONFIG,
+    LLM_RETRY_ATTEMPTS,
+    URL_METADATA_EXTRACTION_GENERATION_CONFIG,
+    VIDEO_ANALYSIS_GENERATION_CONFIG,
+    VIDEO_CLASSIFICATION_PROMPT_VERSION,
+    build_ai_audit,
+    generate_content_with_policy,
+    prompt_metadata,
+)
 from bot import MessagePayload
 from config import get_env
 from logging_config import structlog
@@ -31,9 +46,12 @@ class ClassificationResult(TypedDict):
     is_new_category: bool
     confidence: float
     needs_review: bool
+    content_details: NotRequired[str]
+    ai_audit: NotRequired[dict[str, Any]]
 
 
 _MODEL_NAME = get_env("GEMINI_MODEL", required=True)
+_VIDEO_MODEL_NAME = get_env("GEMINI_VIDEO_MODEL") or _MODEL_NAME
 _REQUIRED_RESPONSE_FIELDS = {
     "title",
     "summary",
@@ -85,11 +103,64 @@ Return this exact JSON structure:
   "tags": ["tag1", "tag2", "tag3"],
   "category": "<best matching category name OR new category name>",
   "is_new_category": true/false,
-  "confidence": 0.0-1.0
+  "confidence": 0.0-1.0,
+  "content_details": "<optional detailed observations for images/videos/screenshots; empty string otherwise>"
 }}
 
 Classify the substance of the saved content, not merely the source platform or website host.
-If extracted page text, transcript, or article content is present, prioritize that over generic Open Graph metadata.
+If extracted page text, transcript, article content, image pixels, or video frames/audio are present, prioritize that over generic Open Graph metadata.
+Only set "is_new_category" to true when no existing category fits well. Prefer existing categories unless a new category is clearly better."""
+
+
+def build_video_classification_prompt(
+    source_type: str,
+    source_metadata: str,
+    category_list: list[str],
+    few_shot_examples: list[dict[str, Any]] | None = None,
+) -> str:
+    """Build a multimodal prompt that prioritizes actual video content."""
+    if category_list:
+        category_instruction = "Reuse one of these if it fits:\n" + "\n".join(f"- {name}" for name in category_list)
+    else:
+        category_instruction = (
+            "No categories exist yet. Create an appropriate high-level category for this content."
+        )
+
+    examples_block = ""
+    if few_shot_examples:
+        example_lines = [
+            f"Content: {example.get('content_text', '')} -> Category: {example.get('correct_category', '')}"
+            for example in few_shot_examples
+        ]
+        examples_block = "## Examples from your corrections:\n" + "\n".join(example_lines) + "\n\n"
+
+    return f"""SYSTEM:
+You are a personal content classifier for a knowledge library.
+Analyze the attached video itself before using source metadata. Use visual frames, on-screen text, visible objects, actions, scene changes, and spoken or audible context when available.
+Return ONLY valid JSON. No markdown. No preamble.
+
+USER:
+Content type: {source_type}
+Source metadata and weak hints:
+{source_metadata}
+
+Existing categories in library:
+{category_instruction}
+
+{examples_block}\
+Return this exact JSON structure:
+{{
+  "title": "<10-word title based on actual video content>",
+  "summary": "<2-4 sentence description of the video's substance>",
+  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+  "category": "<best matching category name OR new category name>",
+  "is_new_category": true/false,
+  "confidence": 0.0-1.0,
+  "content_details": "<timestamped or sequential observations: scenes, actions, objects, people if relevant, on-screen text, audio/speech, and why this category fits>"
+}}
+
+Do not classify this as merely Instagram, TikTok, LinkedIn, YouTube, X, or another source platform.
+Treat the title, caption, description, and URL as weak hints only. The video content is the source of truth.
 Only set "is_new_category" to true when no existing category fits well. Prefer existing categories unless a new category is clearly better."""
 
 
@@ -131,15 +202,23 @@ def parse_gemini_response(raw: str) -> ClassificationResult:
     if confidence < 0.0 or confidence > 1.0:
         raise ValueError(f"Gemini response field 'confidence' must be between 0.0 and 1.0: {raw}")
 
-    return {
+    is_new_category = parsed["is_new_category"]
+    if not isinstance(is_new_category, bool):
+        raise ValueError(f"Gemini response field 'is_new_category' must be boolean: {raw}")
+
+    result: ClassificationResult = {
         "title": str(parsed["title"]),
         "summary": str(parsed["summary"]),
         "tags": tags,
         "category": str(parsed["category"]),
-        "is_new_category": bool(parsed["is_new_category"]),
+        "is_new_category": is_new_category,
         "confidence": confidence,
         "needs_review": confidence < 0.7,
     }
+    content_details = parsed.get("content_details")
+    if isinstance(content_details, str) and content_details.strip():
+        result["content_details"] = content_details.strip()
+    return result
 
 
 def _initialize_vertexai() -> None:
@@ -149,24 +228,88 @@ def _initialize_vertexai() -> None:
     vertexai.init(project=project, location=region)
 
 
-def _generate_and_parse(prompt_or_parts: str | list[Any], context: str) -> ClassificationResult:
+def _prompt_text_from_request(prompt_or_parts: str | list[Any]) -> str:
+    """Return the prompt string from a text-only or multimodal Gemini request."""
+    if isinstance(prompt_or_parts, str):
+        return prompt_or_parts
+
+    for part in reversed(prompt_or_parts):
+        if isinstance(part, str):
+            return part
+    return ""
+
+
+def _generate_and_parse(
+    prompt_or_parts: str | list[Any],
+    context: str,
+    *,
+    generation_config: dict[str, Any],
+    prompt_version: str,
+    input_modality: str,
+    extraction_source: str,
+    model_name: str | None = None,
+) -> ClassificationResult:
     """Run Gemini and translate Vertex or parsing failures into ClassificationError."""
     try:
         _initialize_vertexai()
-        model = GenerativeModel(_MODEL_NAME)
-        response = model.generate_content(prompt_or_parts)
+        resolved_model_name = model_name or _MODEL_NAME
+        model = GenerativeModel(resolved_model_name)
     except Exception as exc:
         message = str(exc)
         if "quota" in message.lower():
             raise ClassificationError(f"Vertex AI quota error during {context}: {message}") from exc
         raise ClassificationError(f"Vertex AI classification failed during {context}: {message}") from exc
 
-    raw_response = getattr(response, "text", "")
-    try:
-        return parse_gemini_response(raw_response)
-    except ValueError as exc:
-        logger.exception("gemini_classification_invalid_response", raw_response=raw_response, duration_ms=0)
-        raise ClassificationError(f"Invalid Gemini response during {context}: {raw_response}") from exc
+    prompt_info = prompt_metadata(
+        _prompt_text_from_request(prompt_or_parts),
+        prompt_version,
+    )
+    raw_response = ""
+    last_parse_error: ValueError | None = None
+
+    for attempt in range(1, LLM_RETRY_ATTEMPTS + 1):
+        try:
+            response, call_policy = generate_content_with_policy(
+                model,
+                prompt_or_parts,
+                generation_config=generation_config,
+                response_schema=CLASSIFICATION_RESPONSE_SCHEMA,
+                response_schema_version=CLASSIFICATION_RESPONSE_SCHEMA_VERSION,
+            )
+        except Exception as exc:
+            message = str(exc)
+            if "quota" in message.lower():
+                raise ClassificationError(f"Vertex AI quota error during {context}: {message}") from exc
+            raise ClassificationError(f"Vertex AI classification failed during {context}: {message}") from exc
+
+        raw_response = getattr(response, "text", "")
+        try:
+            result = parse_gemini_response(raw_response)
+        except ValueError as exc:
+            last_parse_error = exc
+            logger.warning(
+                "gemini_classification_invalid_response",
+                context=context,
+                attempt=attempt,
+                max_attempts=LLM_RETRY_ATTEMPTS,
+                raw_response=raw_response,
+                duration_ms=0,
+            )
+            continue
+
+        result["ai_audit"] = build_ai_audit(
+            model_name=resolved_model_name,
+            prompt=prompt_info,
+            generation_config=call_policy.generation_config,
+            input_modality=input_modality,
+            extraction_source=extraction_source,
+            confidence=result["confidence"],
+            parser_version=CLASSIFICATION_PARSER_VERSION,
+            retry_count=attempt - 1,
+        )
+        return result
+
+    raise ClassificationError(f"Invalid Gemini response during {context}: {raw_response}") from last_parse_error
 
 
 def classify_text(
@@ -181,7 +324,14 @@ def classify_text(
         category_list=existing_categories,
         few_shot_examples=few_shot_examples,
     )
-    return _generate_and_parse(prompt, "text classification")
+    return _generate_and_parse(
+        prompt,
+        "text classification",
+        generation_config=CLASSIFICATION_GENERATION_CONFIG,
+        prompt_version=CLASSIFICATION_PROMPT_VERSION,
+        input_modality="text",
+        extraction_source="telegram_text",
+    )
 
 
 def classify_image(
@@ -189,16 +339,54 @@ def classify_image(
     caption: str | None,
     existing_categories: list[str],
     few_shot_examples: list[dict[str, Any]] | None = None,
+    source_type: str = "image",
+    extraction_source: str = "image_bytes",
 ) -> ClassificationResult:
     """Classify an image or screenshot with Gemini Flash vision."""
     image_part = Part.from_data(image_bytes, mime_type="image/jpeg")
     text_prompt = build_classification_prompt(
-        source_type="image",
+        source_type=source_type,
         content_text=caption or "[see attached image]",
         category_list=existing_categories,
         few_shot_examples=few_shot_examples,
     )
-    return _generate_and_parse([image_part, text_prompt], "image classification")
+    return _generate_and_parse(
+        [image_part, text_prompt],
+        "image classification",
+        generation_config=IMAGE_ANALYSIS_GENERATION_CONFIG,
+        prompt_version=CLASSIFICATION_PROMPT_VERSION,
+        input_modality=source_type,
+        extraction_source=extraction_source,
+    )
+
+
+def classify_video_content(
+    video_bytes: bytes,
+    video_mime_type: str,
+    source_metadata: str,
+    existing_categories: list[str],
+    few_shot_examples: list[dict[str, Any]] | None = None,
+    source_type: str = "video",
+    extraction_source: str = "video_bytes",
+    context: str = "video classification",
+) -> ClassificationResult:
+    """Classify a video from the actual visual/audio content."""
+    video_part = Part.from_data(video_bytes, mime_type=video_mime_type)
+    prompt = build_video_classification_prompt(
+        source_type=source_type,
+        source_metadata=source_metadata,
+        category_list=existing_categories,
+        few_shot_examples=few_shot_examples,
+    )
+    return _generate_and_parse(
+        [video_part, prompt],
+        context,
+        generation_config=VIDEO_ANALYSIS_GENERATION_CONFIG,
+        prompt_version=VIDEO_CLASSIFICATION_PROMPT_VERSION,
+        input_modality=source_type,
+        extraction_source=extraction_source,
+        model_name=_VIDEO_MODEL_NAME,
+    )
 
 
 def classify_url(
@@ -213,6 +401,8 @@ def classify_url(
     resolved_url: str | None = None,
     is_video: bool = False,
     video_url: str | None = None,
+    video_bytes: bytes | None = None,
+    video_mime_type: str | None = None,
 ) -> ClassificationResult:
     """Classify URL metadata with Gemini Flash."""
     parsed_url = urlparse(url if "://" in url else f"https://{url}")
@@ -236,13 +426,32 @@ def classify_url(
         content_parts.append(f"Extracted page content:\n{content_text[:12000]}")
 
     prompt_content = "\n".join(part for part in content_parts if part) or url
+    if is_video and video_bytes:
+        return classify_video_content(
+            video_bytes=video_bytes,
+            video_mime_type=video_mime_type or "video/mp4",
+            source_metadata=prompt_content,
+            existing_categories=existing_categories,
+            few_shot_examples=few_shot_examples,
+            source_type=prompt_source_type,
+            extraction_source="url_video_bytes",
+            context="URL video classification",
+        )
+
     prompt = build_classification_prompt(
         source_type=prompt_source_type,
         content_text=prompt_content,
         category_list=existing_categories,
         few_shot_examples=few_shot_examples,
     )
-    return _generate_and_parse(prompt, "URL classification")
+    return _generate_and_parse(
+        prompt,
+        "URL classification",
+        generation_config=URL_METADATA_EXTRACTION_GENERATION_CONFIG,
+        prompt_version=CLASSIFICATION_PROMPT_VERSION,
+        input_modality=prompt_source_type,
+        extraction_source="url_extracted_text" if content_text else "url_metadata",
+    )
 
 
 def classify_from_transcript(
@@ -257,7 +466,14 @@ def classify_from_transcript(
         category_list=existing_categories,
         few_shot_examples=few_shot_examples,
     )
-    return _generate_and_parse(prompt, "transcript classification")
+    return _generate_and_parse(
+        prompt,
+        "transcript classification",
+        generation_config=CLASSIFICATION_GENERATION_CONFIG,
+        prompt_version=CLASSIFICATION_PROMPT_VERSION,
+        input_modality="video_file",
+        extraction_source="video_transcript",
+    )
 
 
 def _prompt_examples_for(db: Any | None, source_type: str) -> list[dict[str, str]]:
@@ -298,6 +514,7 @@ def classify_artifact(
         )
     elif input_type in {"instagram_url", "linkedin_url", "url"}:
         is_video_value = str(content_data.get("is_video") or "").lower() == "true"
+        video_bytes = content_data.get("video_bytes")
         result = classify_url(
             og_title=str(content_data.get("og_title") or content_data.get("title") or payload.get("url") or ""),
             og_description=str(content_data.get("og_description") or content_data.get("description") or ""),
@@ -314,14 +531,33 @@ def classify_artifact(
             resolved_url=str(content_data.get("resolved_url")) if content_data.get("resolved_url") else None,
             is_video=is_video_value,
             video_url=str(content_data.get("video_url")) if content_data.get("video_url") else None,
+            video_bytes=video_bytes if isinstance(video_bytes, bytes) else None,
+            video_mime_type=(
+                str(content_data.get("video_mime_type"))
+                if content_data.get("video_mime_type")
+                else None
+            ),
         )
     elif input_type == "video_file":
         transcript = content_data.get("transcript")
-        result = classify_from_transcript(
-            transcript if isinstance(transcript, str) else "",
-            existing_categories,
-            few_shot_examples=few_shot_examples,
-        )
+        video_bytes = content_data.get("video_bytes")
+        if isinstance(video_bytes, bytes) and video_bytes:
+            result = classify_video_content(
+                video_bytes=video_bytes,
+                video_mime_type=str(content_data.get("video_mime_type") or "video/mp4"),
+                source_metadata=str(payload.get("caption") or "Uploaded Telegram video file."),
+                existing_categories=existing_categories,
+                few_shot_examples=few_shot_examples,
+                source_type="video_file",
+                extraction_source="telegram_video_bytes",
+                context="uploaded video classification",
+            )
+        else:
+            result = classify_from_transcript(
+                transcript if isinstance(transcript, str) else "",
+                existing_categories,
+                few_shot_examples=few_shot_examples,
+            )
     else:
         raise ClassificationError(f"Unsupported artifact input_type for classification: {input_type}")
 

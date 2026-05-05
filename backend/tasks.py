@@ -19,7 +19,7 @@ from ai.classify import classify_artifact, classify_from_transcript
 from ai.evolve import run_tier2_evolution
 from ai.transcribe import transcribe_from_r2
 from bot import MessagePayload, get_bot, get_redis_client, send_confirmation, send_error, send_subcategory_proposal
-from config import get_env
+from config import get_env, get_int_env
 from digest import format_digest_message, get_digest_items
 from logging_config import structlog
 from storage.db import (
@@ -31,6 +31,7 @@ from storage.db import (
     get_existing_category_names,
     get_or_create_category,
     get_prompt_examples,
+    record_model_change_if_needed,
 )
 from storage.r2 import download_telegram_file, fetch_og_metadata, upload_to_r2
 
@@ -94,8 +95,31 @@ def _build_media_content_data(
     if input_type == "image":
         return {"image_bytes": file_bytes, "caption": payload.get("caption")}
     if input_type == "video_file":
-        return {"transcript": "", "image_bytes": None}
+        max_video_bytes = get_int_env("GEMINI_INLINE_VIDEO_MAX_BYTES", 18_000_000)
+        inline_video = file_bytes if file_bytes is not None and len(file_bytes) <= max_video_bytes else None
+        return {
+            "transcript": "",
+            "image_bytes": None,
+            "video_bytes": inline_video,
+            "video_mime_type": payload.get("mime_type") or "video/mp4",
+        }
     raise ValueError(f"Unsupported media input_type: {input_type}")
+
+
+def _analysis_text_for_storage(
+    content_data: dict[str, Any],
+    classification_result: dict[str, Any],
+) -> str | None:
+    """Return searchable rich text produced during multimodal processing."""
+    transcript = content_data.get("transcript")
+    if isinstance(transcript, str) and transcript.strip():
+        return transcript.strip()
+
+    content_details = classification_result.get("content_details")
+    if isinstance(content_details, str) and content_details.strip():
+        return content_details.strip()
+
+    return None
 
 
 def _build_content_data(payload: MessagePayload, file_bytes: bytes | None) -> dict[str, Any]:
@@ -172,6 +196,7 @@ def process_artifact(self: Any, payload: dict[str, Any]) -> None:
     try:
         typed_payload: MessagePayload = payload  # type: ignore[assignment]
         db = SessionLocal()
+        record_model_change_if_needed(db, get_env("GEMINI_MODEL", required=True), commit=True)
 
         logger.info("artifact_media_download_starting", artifact_id=artifact_id, input_type=input_type, duration_ms=0)
         file_bytes: bytes | None = None
@@ -262,8 +287,9 @@ def process_artifact(self: Any, payload: dict[str, Any]) -> None:
             ai_title=result["title"],
             ai_summary=result["summary"],
             ai_tags=result["tags"],
-            ai_transcript=content_data.get("transcript"),
+            ai_transcript=_analysis_text_for_storage(content_data, result),
             ai_confidence=result["confidence"],
+            ai_audit=result.get("ai_audit"),
             category_id=category.id,
             subcategory_id=None,
             user_overridden=False,
@@ -380,6 +406,7 @@ def transcribe_and_update(artifact_id: str, r2_key: str, chat_id: int) -> None:
             return
 
         db = SessionLocal()
+        record_model_change_if_needed(db, get_env("GEMINI_MODEL", required=True), commit=True)
         db.execute(
             text("UPDATE artifacts SET ai_transcript = :transcript WHERE id = :id"),
             {"transcript": transcript, "id": artifact_uuid},
@@ -421,6 +448,7 @@ def transcribe_and_update(artifact_id: str, r2_key: str, chat_id: int) -> None:
             artifact.ai_summary = result["summary"]
             artifact.ai_tags = result["tags"]
             artifact.ai_confidence = result["confidence"]
+            artifact.ai_audit = result.get("ai_audit")
             category_name = new_category.name
 
         _update_search_vector(db, artifact_uuid)

@@ -1,0 +1,86 @@
+[
+  {
+    "id": "text_backend_note",
+    "input_type": "text",
+    "content": "Notes on implementing FastAPI Telegram webhooks with Celery retries and PostgreSQL persistence.",
+    "existing_categories": ["Coding", "Career", "Food & Recipes"],
+    "expected": {
+      "category": "Coding",
+      "tags": ["fastapi", "telegram", "backend"],
+      "confidence_min": 0.85,
+      "confidence_max": 0.99,
+      "input_modality": "text"
+    }
+  },
+  {
+    "id": "image_recipe_photo",
+    "input_type": "image",
+    "caption": "Homemade sourdough loaf on a cooling rack.",
+    "existing_categories": ["Food & Recipes", "Coding", "Fitness"],
+    "expected": {
+      "category": "Food & Recipes",
+      "tags": ["sourdough", "baking", "recipe"],
+      "confidence_min": 0.82,
+      "confidence_max": 0.98,
+      "input_modality": "image"
+    }
+  },
+  {
+    "id": "screenshot_productivity_dashboard",
+    "input_type": "screenshot",
+    "caption": "Screenshot of a Kanban board with sprint tasks and blocked work.",
+    "existing_categories": ["Productivity", "Coding", "Design"],
+    "expected": {
+      "category": "Productivity",
+      "tags": ["kanban", "planning", "tasks"],
+      "confidence_min": 0.8,
+      "confidence_max": 0.97,
+      "input_modality": "screenshot"
+    }
+  },
+  {
+    "id": "instagram_url_reel",
+    "input_type": "instagram_url",
+    "url": "https://www.instagram.com/reel/example",
+    "title": "Desk setup reel",
+    "description": "Compact workspace upgrade ideas.",
+    "content_text": "A short reel showing monitor lighting, cable management, and a compact work desk setup.",
+    "existing_categories": ["Productivity", "Social Media", "Design"],
+    "expected": {
+      "category": "Productivity",
+      "tags": ["desk setup", "workspace", "productivity"],
+      "confidence_min": 0.78,
+      "confidence_max": 0.96,
+      "input_modality": "instagram_url"
+    }
+  },
+  {
+    "id": "linkedin_url_career_post",
+    "input_type": "linkedin_url",
+    "url": "https://www.linkedin.com/posts/example",
+    "title": "Hiring manager interview advice",
+    "description": "How to answer product leadership interview questions.",
+    "content_text": "LinkedIn post explaining how candidates should frame product leadership examples in interviews.",
+    "existing_categories": ["Career", "Business", "Productivity"],
+    "expected": {
+      "category": "Career",
+      "tags": ["interviews", "leadership", "career"],
+      "confidence_min": 0.8,
+      "confidence_max": 0.97,
+      "input_modality": "linkedin_url"
+    }
+  },
+  {
+    "id": "video_transcript_fitness",
+    "input_type": "video_transcript",
+    "transcript": "Today we are walking through a 20 minute beginner strength circuit with squats, rows, and core work.",
+    "existing_categories": ["Fitness", "Food & Recipes", "Productivity"],
+    "expected": {
+      "category": "Fitness",
+      "tags": ["strength training", "workout", "beginner"],
+      "confidence_min": 0.82,
+      "confidence_max": 0.98,
+      "input_modality": "video_file"
+    }
+  }
+]
