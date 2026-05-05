@@ -53,7 +53,7 @@ services:
     dockerCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     preDeployCommand: python -m alembic upgrade head
     healthCheckPath: /health
-    plan: starter
+    plan: free
     region: oregon
     autoDeployTrigger: commit
     maxShutdownDelaySeconds: 120
@@ -97,7 +97,7 @@ services:
     dockerfilePath: backend/Dockerfile
     dockerContext: .
     dockerCommand: celery -A tasks worker --loglevel=info --concurrency=2
-    plan: starter
+    plan: free
     region: oregon
     autoDeployTrigger: commit
     maxShutdownDelaySeconds: 300
@@ -137,7 +137,7 @@ services:
     dockerfilePath: backend/Dockerfile
     dockerContext: .
     dockerCommand: celery -A tasks beat --loglevel=info
-    plan: starter
+    plan: free
     region: oregon
     autoDeployTrigger: commit
     maxShutdownDelaySeconds: 120
@@ -161,7 +161,7 @@ services:
 
   - type: keyvalue
     name: stash-redis
-    plan: starter
+    plan: free
     region: oregon
     ipAllowList: []
     maxmemoryPolicy: noeviction
@@ -170,6 +170,6 @@ databases:
   - name: stash-postgres
     databaseName: stash
     user: stash
-    plan: basic-256mb
+    plan: free
     region: oregon
     postgresMajorVersion: "17"

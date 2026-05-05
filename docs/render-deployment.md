@@ -1,6 +1,6 @@
 # Render Backend Deployment
 
-This repo includes a Render Blueprint at [`render.yaml`](../render.yaml) for the backend stack:
+This repo includes a free/prototype Render Blueprint at [`render.yaml`](../render.yaml) for the backend stack:
 
 - `stash-api`: FastAPI web service built from `backend/Dockerfile`
 - `stash-worker`: Celery worker built from the same image
@@ -40,6 +40,18 @@ Review Render's MCP docs before granting an API key to any AI tool. Render API k
 8. After Render assigns the API URL, confirm `TELEGRAM_WEBHOOK_URL` is set to `https://<render-api-host>/webhook`.
 9. Set the frontend Vercel env var `VITE_API_URL` to the Render API base URL and redeploy the frontend.
 
+## Cost Profile
+
+The default Blueprint uses Render's free service, Postgres, and Key Value plans so the initial estimate should be `$0/month`.
+
+This is suitable for prototype testing, not durable production:
+
+- Free Render Postgres is time-limited on Render. Move to Neon, Supabase, Railway, or a paid Render database before storing real long-term data.
+- Free Render services have low CPU/RAM and may be slow for video extraction, Whisper, and Gemini-heavy workloads.
+- Free Render Key Value is small. If Celery queues grow, use Upstash Redis pay-as-you-go or upgrade Render Key Value.
+
+For a production deployment on Render, change the `plan` fields in `render.yaml` back to paid tiers deliberately and review the monthly estimate before applying.
+
 ## Required Secrets
 
 These values must be entered in Render and must never be committed:
@@ -78,7 +90,7 @@ If `/health` returns 503, fix the named dependency first. A failed `r2` check us
 
 ## Notes
 
-- The Blueprint uses paid `starter` web and worker services because Render does not support free background workers.
+- The Blueprint intentionally uses free Render plans to avoid the multi-service starter estimate.
 - The web service runs `python -m alembic upgrade head` as a pre-deploy command.
 - The backend validates required environment variables during startup. Leaving any required secret blank will fail the first deploy.
 - Render's MCP server requires a broadly scoped API key. Review the Render MCP docs before granting that access to any AI tool.
