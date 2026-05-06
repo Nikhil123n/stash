@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from api.auth_routes import router as auth_router
 from api.artifacts import router as artifacts_router
 from api.artifacts import stats_router
 from api.categories import router as categories_router
@@ -12,6 +13,7 @@ from api.digest import router as digest_router
 from bot import (
     extract_message_payload,
     get_bot,
+    handle_dashboard_command,
     handle_awaiting_edit_message,
     handle_subcategory_callback,
     register_webhook,
@@ -70,6 +72,7 @@ app.include_router(categories_router)
 app.include_router(artifacts_router)
 app.include_router(stats_router)
 app.include_router(digest_router)
+app.include_router(auth_router)
 
 
 def validate_environment() -> None:
@@ -138,6 +141,9 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
 
         message = update.effective_message
         if message is None:
+            return {"ok": True}
+
+        if await handle_dashboard_command(message):
             return {"ok": True}
 
         if await handle_awaiting_edit_message(message):

@@ -8,6 +8,7 @@ import re
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from urllib.parse import quote
 from uuid import UUID
 
 from config import get_env
@@ -120,6 +121,58 @@ def _extract_message_id(message: Message) -> int:
     if message_id is None:
         raise ValueError("Telegram message is missing message_id.")
     return int(message_id)
+
+
+def _message_text(message: Message) -> str:
+    """Return message text or caption as a stripped string."""
+    value = getattr(message, "text", None) or getattr(message, "caption", None) or ""
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _command_name(text: str) -> str | None:
+    """Return the normalized Telegram command name from a message."""
+    if not text.startswith("/"):
+        return None
+    command = text.split(maxsplit=1)[0].lower()
+    command = command.split("@", maxsplit=1)[0]
+    return command
+
+
+def _build_dashboard_link(chat_id: int) -> str:
+    """Create a one-time dashboard magic link for a Telegram chat."""
+    from auth import create_dashboard_magic_token
+
+    dashboard_url = get_env("DASHBOARD_URL", required=True).rstrip("/")
+    token = create_dashboard_magic_token(chat_id)
+    return f"{dashboard_url}/auth?token={quote(token, safe='')}"
+
+
+async def handle_dashboard_command(message: Message) -> bool:
+    """Handle bot commands that should return a dashboard magic link."""
+    command = _command_name(_message_text(message))
+    if command not in {"/dashboard", "/start"}:
+        return False
+
+    chat_id = _extract_chat_id(message)
+    try:
+        dashboard_link = _build_dashboard_link(chat_id)
+    except PermissionError:
+        await get_bot().send_message(
+            chat_id=chat_id,
+            text="This Telegram account is not allowed to open this Stash dashboard.",
+        )
+        return True
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    await get_bot().send_message(
+        chat_id=chat_id,
+        text="Open your Stash dashboard with this private link. It expires in 10 minutes and works once.",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Open Stash Dashboard", url=dashboard_link)]]
+        ),
+    )
+    return True
 
 
 def _extract_first_url(value: str | None) -> str | None:

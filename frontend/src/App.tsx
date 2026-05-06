@@ -1,14 +1,15 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query"
-import { useMemo, useState } from "react"
-import { BrowserRouter, Route, Routes } from "react-router-dom"
+import { useState } from "react"
+import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom"
 
 import type { ArtifactOut } from "@/api"
 import { getCategories, getStats } from "@/api"
 import { ArtifactModal } from "@/components/ArtifactModal"
+import { AuthCallback } from "@/components/AuthCallback"
 import { CategoryDetail } from "@/components/CategoryDetail"
 import { CategoryGrid } from "@/components/CategoryGrid"
+import { MagicLinkLogin } from "@/components/MagicLinkLogin"
 import { SearchBar } from "@/components/SearchBar"
-import { TelegramLogin } from "@/components/TelegramLogin"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 
@@ -76,7 +77,7 @@ function Home() {
   )
 }
 
-function AppRoutes() {
+function DashboardRoutes() {
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <Routes>
@@ -87,20 +88,30 @@ function AppRoutes() {
   )
 }
 
-function App() {
+function AppContent() {
   const skipAuth = import.meta.env.VITE_SKIP_AUTH === "true"
   const [token, setToken] = useState(() => localStorage.getItem("stash_token"))
-  const authed = useMemo(() => skipAuth || !!token, [skipAuth, token])
+  const location = useLocation()
+  const authed = skipAuth || !!token
+
+  if (location.pathname === "/auth") return <AuthCallback onAuthenticated={setToken} />
+
+  if (authed) return <DashboardRoutes />
 
   return (
+    <Routes>
+      <Route path="/auth" element={<AuthCallback onAuthenticated={setToken} />} />
+      <Route path="*" element={<MagicLinkLogin />} />
+    </Routes>
+  )
+}
+
+function App() {
+  return (
     <QueryClientProvider client={queryClient}>
-      {authed ? (
-        <BrowserRouter>
-          <AppRoutes />
-        </BrowserRouter>
-      ) : (
-        <TelegramLogin onAuthenticated={setToken} />
-      )}
+      <BrowserRouter>
+        <AppContent />
+      </BrowserRouter>
     </QueryClientProvider>
   )
 }

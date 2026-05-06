@@ -53,6 +53,9 @@ Set these on the Render `stash-api` web service:
 - `DASHBOARD_URL`: `https://stash-two-zeta.vercel.app`
 - `CORS_ORIGINS`: `https://stash-two-zeta.vercel.app`
 - `SKIP_AUTH`: `false`
+- `DASHBOARD_ALLOWED_CHAT_IDS`: your Telegram chat ID, or a comma-separated allowlist
+- `DASHBOARD_MAGIC_LINK_TTL_SECONDS`: `600`
+- `DASHBOARD_SESSION_TTL_SECONDS`: `2592000`
 - `VIDEO_URL_ANALYSIS_ENABLED`: `true`
 - `VIDEO_URL_MAX_BYTES`: `18000000`
 - `VIDEO_URL_MAX_DURATION_SECONDS`: `180`

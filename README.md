@@ -60,7 +60,7 @@ Required production variables:
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`: Cloudflare R2 credentials.
 - `R2_BUCKET_NAME`, `R2_BUCKET_ID`: R2 storage bucket and public bucket ID.
 - `SECRET_KEY`: JWT signing key.
-- `DASHBOARD_URL`: Public frontend URL used in digest messages.
+- `DASHBOARD_URL`: Public frontend URL used in digests and Telegram dashboard magic links.
 - `CORS_ORIGINS`: Comma-separated dashboard origins allowed to call the API.
 - `GEMINI_MODEL`: Vertex AI Gemini model used for classification.
 - `GEMINI_VIDEO_MODEL`: Vertex AI Gemini model used when real video bytes are available.
@@ -73,12 +73,15 @@ Local-only helpers:
 - `WHISPER_MODEL`, `WHISPER_MIN_AVAILABLE_MEMORY_BYTES`, and `STASH_TMP_DIR` configure local video transcription.
 - `VIDEO_URL_ANALYSIS_ENABLED`, `VIDEO_URL_MAX_BYTES`, `VIDEO_URL_MAX_DURATION_SECONDS`, and `VIDEO_URL_DOWNLOAD_FORMAT` control social/reel URL video downloads for Gemini analysis.
 - `YTDLP_COOKIES_BROWSER` or `YTDLP_COOKIES_FILE` can be set when public video extraction needs cookies.
+- `DASHBOARD_ALLOWED_CHAT_IDS`: Optional comma-separated chat ID allowlist for dashboard magic links. Defaults to `YOUR_CHAT_ID`.
+- `DASHBOARD_MAGIC_LINK_TTL_SECONDS`: Optional one-time dashboard link TTL, default `600`.
+- `DASHBOARD_SESSION_TTL_SECONDS`: Optional browser dashboard session TTL, default `2592000`.
 
 Frontend variables live in `frontend/.env`.
 
 - `VITE_API_URL`: API base URL.
 - `VITE_SKIP_AUTH`: Set to `true` only for local dashboard auth bypass.
-- `VITE_TELEGRAM_BOT_NAME`: Telegram bot name for the login widget.
+- `VITE_TELEGRAM_BOT_NAME`: Telegram bot name used for the dashboard link request button.
 
 Never commit real `.env` files. Use `.env.example` files for safe placeholders only.
 
@@ -137,6 +140,8 @@ Forward content to your Telegram bot:
 The bot replies immediately with `Got it, processing...`, then sends a saved confirmation after Celery finishes classification and storage.
 
 Open the dashboard to browse categories, search artifacts, view details, re-categorize items, or delete stale saves.
+
+For production dashboard access, send `/dashboard` to the Telegram bot. The bot replies with a private one-time link that opens the web dashboard and stores a signed session token in the browser.
 
 ## Dynamic Categories
 

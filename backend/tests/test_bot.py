@@ -181,3 +181,25 @@ def test_send_helpers_use_bot_send_message(monkeypatch) -> None:
         text="I can only save URLs, images, videos, and text. Stickers/voice/audio not supported yet.",
         parse_mode="Markdown",
     )
+
+
+def test_dashboard_command_sends_magic_link(monkeypatch) -> None:
+    """The /dashboard command is handled without becoming a saved artifact."""
+    send_message = AsyncMock()
+    fake_application = SimpleNamespace(bot=SimpleNamespace(send_message=send_message))
+    monkeypatch.setattr(bot, "application", fake_application)
+    monkeypatch.setattr(bot, "_build_dashboard_link", lambda _chat_id: "https://dashboard.test/auth?token=abc")
+
+    handled = asyncio.run(bot.handle_dashboard_command(make_message(text="/dashboard")))
+
+    assert handled is True
+    assert send_message.await_count == 1
+    assert send_message.await_args.kwargs["chat_id"] == 123
+    assert "private link" in send_message.await_args.kwargs["text"]
+
+
+def test_non_dashboard_command_is_not_handled() -> None:
+    """Regular messages still flow into artifact extraction."""
+    handled = asyncio.run(bot.handle_dashboard_command(make_message(text="save this note")))
+
+    assert handled is False

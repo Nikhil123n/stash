@@ -111,7 +111,7 @@ export async function getStats(): Promise<StatsOut> {
   return response.data
 }
 
-export async function loginWithTelegram(data: Record<string, unknown>): Promise<{ token: string }> {
-  const response = await api.post<{ token: string }>("/api/auth/telegram", data)
+export async function exchangeMagicLink(token: string): Promise<{ token: string }> {
+  const response = await api.post<{ token: string }>("/api/auth/magic", { token })
   return response.data
 }

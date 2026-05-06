@@ -10,7 +10,7 @@ npm install
 npm run dev
 ```
 
-Set `VITE_API_URL` to the Stash API URL. Keep real `.env` files out of git.
+Set `VITE_API_URL` to the Stash API URL. Set `VITE_TELEGRAM_BOT_NAME` to show a button that opens the bot with `/dashboard` prefilled. Keep real `.env` files out of git.
 
 ## Checks
 
