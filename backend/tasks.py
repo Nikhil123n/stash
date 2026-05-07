@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import threading
 import time
 from typing import Any
 from uuid import UUID, uuid4
@@ -43,6 +44,56 @@ from storage.db import (
 from storage.r2 import download_telegram_file, fetch_og_metadata, upload_to_r2
 
 logger = structlog.get_logger(__name__)
+
+_TRANSCRIBE_AND_UPDATE_TASK = "tasks.transcribe_and_update"
+
+
+def _runs_inline() -> bool:
+    """Return whether follow-up tasks should run in the current process."""
+    return get_env("TASK_EXECUTION_MODE", "celery").strip().lower() == "inline"
+
+
+def _run_transcribe_and_update_inline(artifact_id: str, r2_key: str, chat_id: int) -> None:
+    """Run delayed video analysis in-process for single-service deployments."""
+    try:
+        result = transcribe_and_update.apply(args=[artifact_id, r2_key, chat_id], throw=False)
+        failed = getattr(result, "failed", lambda: False)
+        if failed():
+            logger.error(
+                "inline_video_transcription_failed",
+                task_name=_TRANSCRIBE_AND_UPDATE_TASK,
+                artifact_id=artifact_id,
+                error=str(getattr(result, "result", "")),
+                duration_ms=0,
+            )
+    except Exception:
+        logger.exception(
+            "inline_video_transcription_failed",
+            task_name=_TRANSCRIBE_AND_UPDATE_TASK,
+            artifact_id=artifact_id,
+            duration_ms=0,
+        )
+
+
+def _enqueue_transcribe_and_update(artifact_id: str, r2_key: str, chat_id: int) -> None:
+    """Queue or start delayed video analysis based on the runtime task mode."""
+    if _runs_inline():
+        thread = threading.Thread(
+            target=_run_transcribe_and_update_inline,
+            args=(artifact_id, r2_key, chat_id),
+            name="stash-video-transcription",
+            daemon=True,
+        )
+        thread.start()
+        logger.info(
+            "inline_video_transcription_started",
+            task_name=_TRANSCRIBE_AND_UPDATE_TASK,
+            artifact_id=artifact_id,
+            duration_ms=0,
+        )
+        return
+
+    transcribe_and_update.delay(artifact_id, r2_key, chat_id)
 
 
 def _safe_async_run(coro: Any) -> Any:
@@ -326,7 +377,7 @@ def process_artifact(self: Any, payload: dict[str, Any]) -> None:
                 input_type=input_type,
                 duration_ms=_duration_ms(started_at),
             )
-            transcribe_and_update.delay(str(artifact_id), r2_key, int(payload["chat_id"]))
+            _enqueue_transcribe_and_update(str(artifact_id), r2_key, int(payload["chat_id"]))
 
         logger.info(
             "artifact_confirmation_send_starting",

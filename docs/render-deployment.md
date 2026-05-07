@@ -65,6 +65,7 @@ Set these on the Render `stash-api` web service:
 - `YTDLP_RETRIES`: `2`
 - `YTDLP_FRAGMENT_RETRIES`: `2`
 - `STASH_TMP_DIR`: `/tmp`
+- `TASK_EXECUTION_MODE`: `inline` for a single free Render web service, or `celery` when a separate worker is running
 - `RUN_MIGRATIONS_ON_START`: `true` for the first deploy, then `false` after migrations succeed
 
 ## Worker Reality
@@ -75,7 +76,9 @@ Stash uses Celery for Telegram artifact processing. The clean production setup i
 - `stash-worker`: Render background worker running `celery -A tasks worker --loglevel=info --concurrency=2`
 - `stash-beat`: Render background worker running `celery -A tasks beat --loglevel=info`
 
-Render free plans do not support background workers. If you only deploy `stash-api` on Render free, webhook requests can enqueue jobs, but nothing will process the queue unless a worker is running somewhere.
+Render free plans do not support background workers. If you only deploy `stash-api` on Render free, set `TASK_EXECUTION_MODE=inline` so the web service runs Telegram artifact processing in-process after acknowledging the webhook.
+
+Inline mode is for prototypes and personal testing. Jobs can be interrupted if the free service restarts or sleeps, and long media work shares memory/CPU with the API. For production, use the separate worker setup below and set `TASK_EXECUTION_MODE=celery`.
 
 For prototype testing, run the worker locally against the deployed `REDIS_URL` and `DATABASE_URL`:
 
