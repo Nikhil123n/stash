@@ -98,7 +98,7 @@ def test_fetch_video_provider_metadata_downloads_video_bytes(monkeypatch, writab
 
 
 def test_video_provider_metadata_skips_oversized_duration(monkeypatch) -> None:
-    """Very long videos are not downloaded into memory for inline analysis."""
+    """Very long videos skip download but keep captions for transcript classification."""
 
     class FakeYoutubeDL:
         def __init__(self, _options: dict[str, object]) -> None:
@@ -112,14 +112,33 @@ def test_video_provider_metadata_skips_oversized_duration(monkeypatch) -> None:
 
         def extract_info(self, _url: str, download: bool = False) -> dict[str, object]:
             assert download is False
-            return {"title": "Long talk", "duration": 3600, "ext": "mp4"}
+            return {
+                "title": "Long talk",
+                "duration": 3600,
+                "ext": "mp4",
+                "automatic_captions": {
+                    "en": [{"ext": "json3", "url": "https://captions.example/json3"}],
+                },
+            }
+
+    class FakeResponse:
+        text = '{"events":[{"segs":[{"utf8":"This section explains database indexing."}]}]}'
+
+        def raise_for_status(self) -> None:
+            return None
 
     fake_yt_dlp = types.ModuleType("yt_dlp")
     fake_yt_dlp.YoutubeDL = FakeYoutubeDL
     monkeypatch.setitem(sys.modules, "yt_dlp", fake_yt_dlp)
+    monkeypatch.setattr(r2.httpx, "get", lambda *_args, **_kwargs: FakeResponse())
     monkeypatch.setenv("VIDEO_URL_MAX_DURATION_SECONDS", "180")
 
-    result = r2._fetch_video_provider_metadata("https://example.com/video/long")
+    result = r2._fetch_video_provider_metadata(
+        "https://example.com/video/long",
+        include_video_download=True,
+    )
 
     assert result["title"] == "Long talk"
+    assert result["transcript"] == "This section explains database indexing."
+    assert "Video transcript:" in result["content_text"]
     assert "video_bytes" not in result

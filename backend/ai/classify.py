@@ -109,6 +109,7 @@ Return this exact JSON structure:
 
 Classify the substance of the saved content, not merely the source platform or website host.
 If extracted page text, transcript, article content, image pixels, or video frames/audio are present, prioritize that over generic Open Graph metadata.
+Never use placeholder titles or generic summaries. If the exact content is unclear, say what evidence is available and set confidence low.
 Only set "is_new_category" to true when no existing category fits well. Prefer existing categories unless a new category is clearly better."""
 
 
@@ -418,7 +419,8 @@ def classify_url(
     ]
     if is_video:
         content_parts.append(
-            "Detected video URL or embedded video. Use the actual video/article text below when available; "
+            "Detected video URL or embedded video. Use the actual video bytes first when present. "
+            "If video bytes are not present but a transcript/captions are present below, treat that transcript as the primary source. "
             "do not categorize this only as a social media or video-platform link."
         )
     if video_url:

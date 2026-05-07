@@ -583,6 +583,7 @@ def _fetch_video_provider_metadata(
         "title": title.strip() if isinstance(title, str) and title.strip() else None,
         "description": description.strip() if isinstance(description, str) and description.strip() else None,
         "image_url": thumbnail.strip() if isinstance(thumbnail, str) and thumbnail.strip() else None,
+        "transcript": transcript,
         "content_text": content_text or None,
         "resolved_url": webpage_url.strip() if isinstance(webpage_url, str) and webpage_url.strip() else None,
         "site_name": uploader.strip() if isinstance(uploader, str) and uploader.strip() else None,
@@ -686,7 +687,7 @@ def fetch_og_metadata(
             "is_video": "true" if is_video else "false",
             "video_url": video_url,
         }
-        for key in ("video_bytes", "video_mime_type", "video_duration_seconds", "video_source"):
+        for key in ("transcript", "video_bytes", "video_mime_type", "video_duration_seconds", "video_source"):
             if provider_metadata.get(key):
                 result[key] = provider_metadata[key]
         return result

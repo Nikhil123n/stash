@@ -201,6 +201,10 @@ def _analysis_text_for_storage(
     if isinstance(content_details, str) and content_details.strip():
         return content_details.strip()
 
+    content_text = content_data.get("content_text")
+    if isinstance(content_text, str) and content_text.strip():
+        return content_text.strip()
+
     return None
 
 
@@ -641,7 +645,10 @@ def analyze_url_video_and_update(artifact_id: str, url: str, chat_id: int) -> No
             include_video_download=True,
         )
         video_bytes = content_data.get("video_bytes")
-        if not isinstance(video_bytes, bytes) or not video_bytes:
+        content_text = content_data.get("content_text")
+        has_video_bytes = isinstance(video_bytes, bytes) and bool(video_bytes)
+        has_content_text = isinstance(content_text, str) and bool(content_text.strip())
+        if not has_video_bytes and not has_content_text:
             logger.info(
                 "url_video_analysis_empty",
                 artifact_id=artifact_id,
@@ -681,7 +688,7 @@ def analyze_url_video_and_update(artifact_id: str, url: str, chat_id: int) -> No
             resolved_url=str(content_data.get("resolved_url")) if content_data.get("resolved_url") else None,
             is_video=True,
             video_url=str(content_data.get("video_url") or url),
-            video_bytes=video_bytes,
+            video_bytes=video_bytes if has_video_bytes else None,
             video_mime_type=(
                 str(content_data.get("video_mime_type"))
                 if content_data.get("video_mime_type")
