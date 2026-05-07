@@ -14,7 +14,7 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from ai.classify import classify_artifact, classify_from_transcript
+from ai.classify import classify_artifact, classify_from_transcript, classify_url
 from ai.evolve import run_tier2_evolution
 from ai.transcribe import transcribe_from_r2
 from bot import (
@@ -46,11 +46,13 @@ from storage.r2 import download_telegram_file, fetch_og_metadata, upload_to_r2
 logger = structlog.get_logger(__name__)
 
 _TRANSCRIBE_AND_UPDATE_TASK = "tasks.transcribe_and_update"
+_ANALYZE_URL_VIDEO_TASK = "tasks.analyze_url_video_and_update"
+_URL_INPUT_TYPES = {"instagram_url", "linkedin_url", "url"}
 
 
 def _runs_inline() -> bool:
     """Return whether follow-up tasks should run in the current process."""
-    return get_env("TASK_EXECUTION_MODE", "celery").strip().lower() == "inline"
+    return get_env("TASK_EXECUTION_MODE", "inline").strip().lower() == "inline"
 
 
 def _run_transcribe_and_update_inline(artifact_id: str, r2_key: str, chat_id: int) -> None:
@@ -94,6 +96,49 @@ def _enqueue_transcribe_and_update(artifact_id: str, r2_key: str, chat_id: int) 
         return
 
     transcribe_and_update.delay(artifact_id, r2_key, chat_id)
+
+
+def _run_analyze_url_video_inline(artifact_id: str, url: str, chat_id: int) -> None:
+    """Run URL video-byte analysis in-process for single-service deployments."""
+    try:
+        result = analyze_url_video_and_update.apply(args=[artifact_id, url, chat_id], throw=False)
+        failed = getattr(result, "failed", lambda: False)
+        if failed():
+            logger.error(
+                "inline_url_video_analysis_failed",
+                task_name=_ANALYZE_URL_VIDEO_TASK,
+                artifact_id=artifact_id,
+                error=str(getattr(result, "result", "")),
+                duration_ms=0,
+            )
+    except Exception:
+        logger.exception(
+            "inline_url_video_analysis_failed",
+            task_name=_ANALYZE_URL_VIDEO_TASK,
+            artifact_id=artifact_id,
+            duration_ms=0,
+        )
+
+
+def _enqueue_url_video_analysis(artifact_id: str, url: str, chat_id: int) -> None:
+    """Queue or start follow-up URL video-byte analysis."""
+    if _runs_inline():
+        thread = threading.Thread(
+            target=_run_analyze_url_video_inline,
+            args=(artifact_id, url, chat_id),
+            name="stash-url-video-analysis",
+            daemon=True,
+        )
+        thread.start()
+        logger.info(
+            "inline_url_video_analysis_started",
+            task_name=_ANALYZE_URL_VIDEO_TASK,
+            artifact_id=artifact_id,
+            duration_ms=0,
+        )
+        return
+
+    analyze_url_video_and_update.delay(artifact_id, url, chat_id)
 
 
 def _safe_async_run(coro: Any) -> Any:
@@ -167,7 +212,7 @@ def _build_content_data(payload: MessagePayload, file_bytes: bytes | None) -> di
         return {"text": payload.get("text")}
     if input_type in {"image", "video_file"}:
         return _build_media_content_data(payload, file_bytes)
-    if input_type in {"instagram_url", "linkedin_url", "url"}:
+    if input_type in _URL_INPUT_TYPES:
         url = payload.get("url")
         if not url:
             raise ValueError("URL artifact payload is missing url.")
@@ -379,6 +424,17 @@ def process_artifact(self: Any, payload: dict[str, Any]) -> None:
             )
             _enqueue_transcribe_and_update(str(artifact_id), r2_key, int(payload["chat_id"]))
 
+        if input_type in _URL_INPUT_TYPES and str(content_data.get("is_video") or "").lower() == "true":
+            raw_url = payload.get("url")
+            if isinstance(raw_url, str) and raw_url:
+                logger.info(
+                    "url_video_analysis_queued",
+                    artifact_id=str(artifact_id),
+                    input_type=input_type,
+                    duration_ms=_duration_ms(started_at),
+                )
+                _enqueue_url_video_analysis(str(artifact_id), raw_url, int(payload["chat_id"]))
+
         logger.info(
             "artifact_confirmation_send_starting",
             artifact_id=str(artifact_id),
@@ -404,6 +460,20 @@ def process_artifact(self: Any, payload: dict[str, Any]) -> None:
         )
         if db is not None:
             db.rollback()
+
+        if _runs_inline():
+            try:
+                chat_id = payload.get("chat_id")
+                if chat_id is not None:
+                    _safe_async_run(send_error(int(chat_id), "Failed to process."))
+            except Exception:
+                logger.exception(
+                    "telegram_inline_processing_error_failed",
+                    artifact_id=str(artifact_id),
+                    input_type=input_type,
+                    duration_ms=_duration_ms(started_at),
+                )
+            return
 
         if self.request.retries >= self.max_retries:
             try:
@@ -518,6 +588,127 @@ def transcribe_and_update(artifact_id: str, r2_key: str, chat_id: int) -> None:
             artifact_id=artifact_id,
             input_type="video_file",
             r2_key=r2_key,
+            duration_ms=_duration_ms(started_at),
+        )
+        if db is not None:
+            db.rollback()
+    finally:
+        if db is not None:
+            db.close()
+
+
+@celery.task
+def analyze_url_video_and_update(artifact_id: str, url: str, chat_id: int) -> None:
+    """Analyze actual video bytes for a saved URL and update metadata when useful."""
+    db: Session | None = None
+    started_at = time.perf_counter()
+
+    try:
+        artifact_uuid = UUID(str(artifact_id))
+        logger.info(
+            "url_video_analysis_task_started",
+            artifact_id=artifact_id,
+            input_type="url",
+            url=url,
+            duration_ms=0,
+        )
+        content_data = fetch_og_metadata(
+            url,
+            include_video_provider_metadata=True,
+            include_video_download=True,
+        )
+        video_bytes = content_data.get("video_bytes")
+        if not isinstance(video_bytes, bytes) or not video_bytes:
+            logger.info(
+                "url_video_analysis_empty",
+                artifact_id=artifact_id,
+                input_type="url",
+                url=url,
+                duration_ms=_duration_ms(started_at),
+            )
+            return
+
+        db = SessionLocal()
+        record_model_change_if_needed(db, get_env("GEMINI_MODEL", required=True), commit=True)
+        artifact = db.execute(select(Artifact).where(Artifact.id == artifact_uuid)).scalar_one_or_none()
+        if artifact is None:
+            logger.warning(
+                "url_video_analysis_artifact_not_found",
+                artifact_id=artifact_id,
+                input_type="url",
+                duration_ms=_duration_ms(started_at),
+            )
+            db.rollback()
+            return
+
+        existing_categories = get_existing_category_names(db)
+        result = classify_url(
+            og_title=str(content_data.get("title") or artifact.ai_title or url),
+            og_description=str(content_data.get("description") or artifact.ai_summary or ""),
+            url=url,
+            existing_categories=existing_categories,
+            few_shot_examples=get_prompt_examples(db, str(artifact.source_type or "url")),
+            source_type=str(artifact.source_type or "url"),
+            content_text=(
+                str(content_data.get("content_text"))
+                if content_data.get("content_text") is not None
+                else None
+            ),
+            site_name=str(content_data.get("site_name")) if content_data.get("site_name") else None,
+            resolved_url=str(content_data.get("resolved_url")) if content_data.get("resolved_url") else None,
+            is_video=True,
+            video_url=str(content_data.get("video_url") or url),
+            video_bytes=video_bytes,
+            video_mime_type=(
+                str(content_data.get("video_mime_type"))
+                if content_data.get("video_mime_type")
+                else "video/mp4"
+            ),
+        )
+
+        old_category_id = artifact.category_id
+        stored_confidence = float(artifact.ai_confidence or 0.0)
+        category_changed = False
+        category_name = artifact.category.name if artifact.category is not None else "Unknown"
+
+        if result["confidence"] >= stored_confidence:
+            new_category = get_or_create_category(db, result["category"])
+            category_changed = old_category_id != new_category.id
+
+            if category_changed and old_category_id is not None:
+                _decrement_category_count(db, old_category_id)
+                _increment_category_count(db, new_category.id)
+
+            artifact.category_id = new_category.id
+            artifact.ai_title = result["title"]
+            artifact.ai_summary = result["summary"]
+            artifact.ai_tags = result["tags"]
+            artifact.ai_transcript = _analysis_text_for_storage(content_data, result)
+            artifact.ai_confidence = result["confidence"]
+            artifact.ai_audit = result.get("ai_audit")
+            category_name = new_category.name
+
+        _update_search_vector(db, artifact_uuid)
+        db.commit()
+
+        title = str(artifact.ai_title or result["title"])
+        if category_changed:
+            _safe_async_run(_send_video_processed(chat_id, title, category_name))
+
+        logger.info(
+            "url_video_analysis_task_completed",
+            artifact_id=artifact_id,
+            input_type="url",
+            confidence=result["confidence"],
+            category_changed=category_changed,
+            duration_ms=_duration_ms(started_at),
+        )
+    except Exception:
+        logger.exception(
+            "url_video_analysis_task_failed",
+            artifact_id=artifact_id,
+            input_type="url",
+            url=url,
             duration_ms=_duration_ms(started_at),
         )
         if db is not None:

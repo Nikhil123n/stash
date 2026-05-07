@@ -520,7 +520,11 @@ def _download_video_for_analysis(url: str, logger_adapter: object) -> dict[str, 
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def _fetch_video_provider_metadata(url: str) -> dict[str, Any]:
+def _fetch_video_provider_metadata(
+    url: str,
+    *,
+    include_video_download: bool = False,
+) -> dict[str, Any]:
     """Use optional yt-dlp support to fetch public video title, description, and captions."""
     try:
         import yt_dlp
@@ -569,7 +573,11 @@ def _fetch_video_provider_metadata(url: str) -> dict[str, Any]:
         f"Video description:\n{description}" if isinstance(description, str) and description.strip() else "",
     ]
     content_text = "\n".join(part for part in lines if part)[:_MAX_EXTRACTED_TEXT_CHARS]
-    video_download = _download_video_for_analysis(url, _YtDlpLogger()) if _video_info_within_limits(info) else {}
+    video_download = (
+        _download_video_for_analysis(url, _YtDlpLogger())
+        if include_video_download and _video_info_within_limits(info)
+        else {}
+    )
 
     return {
         "title": title.strip() if isinstance(title, str) and title.strip() else None,
@@ -583,7 +591,12 @@ def _fetch_video_provider_metadata(url: str) -> dict[str, Any]:
     }
 
 
-def fetch_og_metadata(url: str) -> dict[str, Any]:
+def fetch_og_metadata(
+    url: str,
+    *,
+    include_video_provider_metadata: bool = False,
+    include_video_download: bool = False,
+) -> dict[str, Any]:
     """Fetch URL metadata and readable page text with a safe fallback on errors."""
     fallback: dict[str, Any] = {
         "title": url,
@@ -603,9 +616,16 @@ def fetch_og_metadata(url: str) -> dict[str, Any]:
         )
     }
 
-    provider_metadata: dict[str, str | None] = {}
+    provider_metadata: dict[str, Any] = {}
     try:
-        provider_metadata = _fetch_video_provider_metadata(url) if _is_video_like_url(url) else {}
+        provider_metadata = (
+            _fetch_video_provider_metadata(
+                url,
+                include_video_download=include_video_download,
+            )
+            if include_video_provider_metadata and _is_video_like_url(url)
+            else {}
+        )
         response = httpx.get(url, headers=headers, timeout=10.0, follow_redirects=True, trust_env=False)
         response.raise_for_status()
 
@@ -656,7 +676,7 @@ def fetch_og_metadata(url: str) -> dict[str, Any]:
             if not content_text or "Video title:" not in content_text:
                 content_text = "\n".join(oembed_lines + ([content_text] if content_text else []))[:_MAX_EXTRACTED_TEXT_CHARS]
 
-        return {
+        result: dict[str, Any] = {
             "title": title,
             "description": description,
             "image_url": image_url,
@@ -666,6 +686,10 @@ def fetch_og_metadata(url: str) -> dict[str, Any]:
             "is_video": "true" if is_video else "false",
             "video_url": video_url,
         }
+        for key in ("video_bytes", "video_mime_type", "video_duration_seconds", "video_source"):
+            if provider_metadata.get(key):
+                result[key] = provider_metadata[key]
+        return result
     except Exception:
         logger.warning("og_metadata_fetch_failed", url=url, duration_ms=0)
         if provider_metadata:

@@ -16,7 +16,7 @@ logger = structlog.get_logger(__name__)
 
 def _runs_inline() -> bool:
     """Return whether the API process should execute queued work itself."""
-    return get_env("TASK_EXECUTION_MODE", "celery").strip().lower() == "inline"
+    return get_env("TASK_EXECUTION_MODE", "inline").strip().lower() == "inline"
 
 
 def _run_process_artifact_inline(payload: dict[str, Any]) -> None:

@@ -86,7 +86,10 @@ def test_fetch_video_provider_metadata_downloads_video_bytes(monkeypatch, writab
     monkeypatch.setattr(r2.tempfile, "mkdtemp", lambda prefix, dir=None: str(download_dir))
     monkeypatch.setattr(r2.shutil, "rmtree", lambda *_args, **_kwargs: None)
 
-    result = r2._fetch_video_provider_metadata("https://example.com/reel/1")
+    result = r2._fetch_video_provider_metadata(
+        "https://example.com/reel/1",
+        include_video_download=True,
+    )
 
     assert result["title"] == "Useful design reel"
     assert result["site_name"] == "Design Channel"

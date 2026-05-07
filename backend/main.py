@@ -88,6 +88,7 @@ def validate_environment() -> None:
 def health_check() -> JSONResponse:
     """Check core runtime dependencies used by the Stash backend."""
     status: dict[str, str] = {}
+    metadata = {"task_execution_mode": get_env("TASK_EXECUTION_MODE", "inline")}
 
     try:
         db = SessionLocal()
@@ -117,10 +118,10 @@ def health_check() -> JSONResponse:
         status["r2"] = "failed"
 
     if all(value == "ok" for value in status.values()):
-        return JSONResponse(status_code=200, content={"status": "ok", **status})
+        return JSONResponse(status_code=200, content={"status": "ok", **status, **metadata})
 
     failed = [name for name, value in status.items() if value != "ok"]
-    return JSONResponse(status_code=503, content={"status": "failed", "failed": failed, **status})
+    return JSONResponse(status_code=503, content={"status": "failed", "failed": failed, **status, **metadata})
 
 
 @app.post("/webhook", response_model=None)

@@ -77,7 +77,7 @@ Local-only helpers:
 - `DASHBOARD_ALLOWED_CHAT_IDS`: Optional comma-separated chat ID allowlist for dashboard magic links. Defaults to `YOUR_CHAT_ID`.
 - `DASHBOARD_MAGIC_LINK_TTL_SECONDS`: Optional one-time dashboard link TTL, default `600`.
 - `DASHBOARD_SESSION_TTL_SECONDS`: Optional browser dashboard session TTL, default `2592000`.
-- `TASK_EXECUTION_MODE`: `celery` for normal API + worker deployments, or `inline` for a single free-tier web service prototype.
+- `TASK_EXECUTION_MODE`: `inline` for a single free-tier web service prototype, or `celery` for normal API + worker deployments.
 
 Frontend variables live in `frontend/.env`.
 
@@ -164,7 +164,7 @@ Telegram webhook does not fire:
 Confirm `TELEGRAM_WEBHOOK_URL` is public HTTPS and ends with `/webhook`. Check Railway logs for webhook registration failures.
 
 Artifacts stay in processing:
-Check Celery worker logs and Redis connectivity. If you are running only one free Render web service with no worker, set `TASK_EXECUTION_MODE=inline` so the API process runs the job after sending the Telegram acknowledgement.
+Check Celery worker logs and Redis connectivity. If you are running only one free Render web service with no worker, use `TASK_EXECUTION_MODE=inline` so the API process runs the job after sending the Telegram acknowledgement.
 
 Video transcription fails:
 Delayed video analysis uses Gemini. If a stored video is larger than `GEMINI_TRANSCRIPTION_INLINE_MAX_BYTES`, analysis is skipped and logged. The runtime image still installs `ffmpeg` because social/reel extraction uses `yt-dlp`.
