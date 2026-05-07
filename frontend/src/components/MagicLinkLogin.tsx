@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 export function MagicLinkLogin() {
   const botName = import.meta.env.VITE_TELEGRAM_BOT_NAME as string | undefined
-  const botUrl = botName ? `https://t.me/${botName}?text=/dashboard` : undefined
+  const botUrl = botName ? `https://t.me/${botName}?start=dashboard` : undefined
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -15,13 +15,13 @@ export function MagicLinkLogin() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Open this dashboard from a private link sent by your Telegram bot.
+            Open Telegram, start the bot, and use the private dashboard link it sends back.
           </p>
           {botUrl ? (
             <Button asChild>
               <a href={botUrl} rel="noreferrer" target="_blank">
                 <Send className="size-4" />
-                Request dashboard link
+                Open Telegram bot
               </a>
             </Button>
           ) : (
