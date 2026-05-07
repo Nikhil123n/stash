@@ -65,12 +65,13 @@ Required production variables:
 - `GEMINI_MODEL`: Vertex AI Gemini model used for classification.
 - `GEMINI_VIDEO_MODEL`: Vertex AI Gemini model used when real video bytes are available.
 - `GEMINI_INLINE_VIDEO_MAX_BYTES`: Maximum Telegram-uploaded video size sent inline to Gemini.
+- `GEMINI_TRANSCRIPTION_INLINE_MAX_BYTES`: Maximum stored video size sent inline to Gemini for delayed transcript-style analysis.
 
 Local-only helpers:
 
 - `SKIP_AUTH=true` disables dashboard auth locally.
 - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` configure the local Compose database.
-- `WHISPER_MODEL`, `WHISPER_MIN_AVAILABLE_MEMORY_BYTES`, and `STASH_TMP_DIR` configure local video transcription.
+- `STASH_TMP_DIR` controls where temporary media downloads are written.
 - `VIDEO_URL_ANALYSIS_ENABLED`, `VIDEO_URL_MAX_BYTES`, `VIDEO_URL_MAX_DURATION_SECONDS`, and `VIDEO_URL_DOWNLOAD_FORMAT` control social/reel URL video downloads for Gemini analysis.
 - `YTDLP_COOKIES_BROWSER` or `YTDLP_COOKIES_FILE` can be set when public video extraction needs cookies.
 - `DASHBOARD_ALLOWED_CHAT_IDS`: Optional comma-separated chat ID allowlist for dashboard magic links. Defaults to `YOUR_CHAT_ID`.
@@ -165,7 +166,7 @@ Artifacts stay in processing:
 Check Celery worker logs and Redis connectivity. The webhook only enqueues work; classification happens in the worker.
 
 Video transcription fails:
-Whisper needs memory and `ffmpeg`. The runtime image installs `ffmpeg`; if memory is below 800 MB, transcription is skipped and logged.
+Delayed video analysis uses Gemini. If a stored video is larger than `GEMINI_TRANSCRIPTION_INLINE_MAX_BYTES`, analysis is skipped and logged. The runtime image still installs `ffmpeg` because social/reel extraction uses `yt-dlp`.
 
 Gemini errors:
 Verify `GOOGLE_CLOUD_PROJECT`, `VERTEX_REGION`, and Vertex AI permissions. Quota errors are wrapped as classification errors in worker logs.

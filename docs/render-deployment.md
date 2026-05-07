@@ -44,6 +44,7 @@ Set these on the Render `stash-api` web service:
 - `GEMINI_MODEL`: `gemini-2.5-flash`
 - `GEMINI_VIDEO_MODEL`: `gemini-2.5-pro`
 - `GEMINI_INLINE_VIDEO_MAX_BYTES`: `18000000`
+- `GEMINI_TRANSCRIPTION_INLINE_MAX_BYTES`: `18000000`
 - `R2_ACCOUNT_ID`: Cloudflare R2 account ID
 - `R2_ACCESS_KEY`: Cloudflare R2 access key
 - `R2_SECRET_KEY`: Cloudflare R2 secret key
@@ -63,8 +64,6 @@ Set these on the Render `stash-api` web service:
 - `YTDLP_SOCKET_TIMEOUT_SECONDS`: `15`
 - `YTDLP_RETRIES`: `2`
 - `YTDLP_FRAGMENT_RETRIES`: `2`
-- `WHISPER_MODEL`: `base`
-- `WHISPER_MIN_AVAILABLE_MEMORY_BYTES`: `838860800`
 - `STASH_TMP_DIR`: `/tmp`
 - `RUN_MIGRATIONS_ON_START`: `true` for the first deploy, then `false` after migrations succeed
 

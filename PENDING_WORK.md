@@ -3,9 +3,9 @@
 Source reviewed: `stash_build_document.docx` in the repository root.
 
 Verification snapshot:
-- Backend tests: `python -m pytest tests` passed with 32 tests.
-- Frontend build: `npm run build --prefix frontend` passed.
-- Current branch has uncommitted implementation work, including the video URL analysis and LLM consistency changes.
+- Backend tests: `python -m pytest tests` passed with 38 tests after the Gemini delayed video analysis update.
+- Frontend build: `npm run build --prefix frontend` passed before the latest backend-only changes.
+- Current branch includes video URL analysis, LLM consistency controls, and Gemini delayed video analysis.
 
 ## P0 - Must Fix Before Real Use
 
@@ -65,7 +65,8 @@ Build document reference:
 
 Current state:
 - Small uploaded videos can be sent inline to Gemini for video analysis.
-- Large uploaded videos are initially classified from an empty transcript, then `transcribe_and_update` may replace metadata later if confidence improves.
+- Large uploaded videos are initially classified from an empty transcript, then `transcribe_and_update` may replace metadata later if Gemini delayed video analysis improves confidence.
+- The original build document named Whisper, but the implementation now uses Gemini video analysis to avoid local model memory pressure.
 - There is no `processing` status on artifacts.
 - The dashboard does not show a processing card/state.
 - There is no first-frame extraction fallback from uploaded videos.
@@ -73,7 +74,7 @@ Current state:
 Pending work:
 - Add artifact processing status, for example `processing | ready | failed`.
 - For large uploaded videos, create a processing artifact first instead of classifying empty content.
-- Run Whisper and/or Gemini video analysis, then finalize the artifact once meaningful metadata exists.
+- Run Gemini video analysis, then finalize the artifact once meaningful metadata exists.
 - Add failure status and retry/error visibility.
 - Consider first-frame extraction for uploaded videos when full inline Gemini video is too large.
 - Update dashboard cards and modal for processing/failed states.

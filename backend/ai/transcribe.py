@@ -1,79 +1,132 @@
-"""Whisper transcription helpers for Stash video artifacts."""
+"""Gemini video analysis helpers for Stash video artifacts."""
 
 from __future__ import annotations
 
+import mimetypes
 import time
-from pathlib import Path
-from typing import Any, TypedDict
-from uuid import uuid4
+from typing import Any
 
-import psutil
-import whisper
+import vertexai
+from vertexai.generative_models import GenerativeModel, Part
 
-from config import get_env, get_int_env, get_path_env
+from ai.consistency import (
+    VIDEO_TRANSCRIPTION_GENERATION_CONFIG,
+    VIDEO_TRANSCRIPTION_PROMPT_VERSION,
+    generate_text_with_policy,
+    prompt_metadata,
+)
+from config import get_env, get_int_env
 from logging_config import structlog
 from storage.r2 import get_r2_client
 
 logger = structlog.get_logger(__name__)
 
-_model: Any | None = None
-_MIN_AVAILABLE_MEMORY_BYTES = get_int_env("WHISPER_MIN_AVAILABLE_MEMORY_BYTES", 800 * 1024 * 1024)
+_MAX_TRANSCRIPTION_TEXT_CHARS = 4000
+_DEFAULT_MAX_VIDEO_BYTES = 18_000_000
 
 
-class TranscriptionResult(TypedDict):
-    """Structured result metadata for a Whisper transcription run."""
-
-    transcript: str
-    duration_seconds: float
-
-
-def get_whisper_model() -> Any:
-    """Load and cache the Whisper base model."""
-    global _model
-
-    if _model is None:
-        _model = whisper.load_model(get_env("WHISPER_MODEL", required=True))
-    return _model
+def _initialize_vertexai() -> None:
+    """Initialize Vertex AI with project and region from environment."""
+    project = get_env("GOOGLE_CLOUD_PROJECT", required=True)
+    region = get_env("VERTEX_REGION", required=True)
+    vertexai.init(project=project, location=region)
 
 
-def _has_enough_memory() -> bool:
-    """Return whether the worker has enough available memory for Whisper base."""
-    available = psutil.virtual_memory().available
-    if available < _MIN_AVAILABLE_MEMORY_BYTES:
+def _max_video_bytes() -> int:
+    """Return the maximum video size sent inline to Gemini for delayed analysis."""
+    default = get_int_env("GEMINI_INLINE_VIDEO_MAX_BYTES", _DEFAULT_MAX_VIDEO_BYTES)
+    return get_int_env("GEMINI_TRANSCRIPTION_INLINE_MAX_BYTES", default)
+
+
+def _guess_mime_type(r2_key: str, content_type: str | None) -> str:
+    """Return the best available video MIME type for Gemini."""
+    if content_type and content_type != "binary/octet-stream":
+        return content_type
+    guessed, _encoding = mimetypes.guess_type(r2_key)
+    return guessed or "video/mp4"
+
+
+def _download_r2_video(r2_key: str) -> tuple[bytes, str] | None:
+    """Download a small enough R2 video object for inline Gemini analysis."""
+    bucket_name = get_env("R2_BUCKET_NAME", required=True)
+    client = get_r2_client()
+    metadata = client.head_object(Bucket=bucket_name, Key=r2_key)
+    content_length = int(metadata.get("ContentLength") or 0)
+    max_bytes = _max_video_bytes()
+
+    if content_length and content_length > max_bytes:
         logger.warning(
-            "whisper_transcription_skipped_low_memory",
-            available_memory_bytes=available,
+            "gemini_video_analysis_skipped_large_file",
+            r2_key=r2_key,
+            content_length=content_length,
+            max_bytes=max_bytes,
             duration_ms=0,
         )
-        return False
-    return True
+        return None
+
+    response = client.get_object(Bucket=bucket_name, Key=r2_key)
+    body = response["Body"].read()
+    if len(body) > max_bytes:
+        logger.warning(
+            "gemini_video_analysis_skipped_large_download",
+            r2_key=r2_key,
+            content_length=len(body),
+            max_bytes=max_bytes,
+            duration_ms=0,
+        )
+        return None
+
+    content_type = response.get("ContentType") or metadata.get("ContentType")
+    return body, _guess_mime_type(r2_key, str(content_type) if content_type else None)
 
 
-def _tmp_video_path() -> Path:
-    """Create a stable temporary MP4 path under /tmp."""
-    tmp_dir = get_path_env("STASH_TMP_DIR", "/tmp")
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    return tmp_dir / f"{uuid4()}.mp4"
+def _build_video_transcription_prompt() -> str:
+    """Build the prompt used for delayed Gemini video transcription."""
+    return """SYSTEM:
+You create searchable notes from personal video artifacts.
+Analyze the attached video using visual frames, on-screen text, spoken words, audio cues, actions, objects, and scene changes.
+Return plain text only. No markdown fences. No JSON.
+
+USER:
+Create a concise but detailed searchable transcript for this video.
+Include:
+- spoken words or a faithful summary if exact transcription is uncertain
+- on-screen text
+- notable visual objects, actions, scenes, and timestamps when useful
+- enough context for a later classifier to categorize the video accurately
+
+If there is no speech, still describe the visual content and any text visible in the video."""
 
 
 def transcribe_from_r2(r2_key: str) -> str:
-    """Download a video from R2, transcribe it with Whisper, and clean up."""
-    if not _has_enough_memory():
-        return ""
-
-    tmp_path = _tmp_video_path()
+    """Analyze a stored video with Gemini and return searchable transcript text."""
     started_at = time.monotonic()
 
     try:
-        bucket_name = get_env("R2_BUCKET_NAME", required=True)
+        downloaded = _download_r2_video(r2_key)
+        if downloaded is None:
+            return ""
 
-        get_r2_client().download_file(bucket_name, r2_key, str(tmp_path))
-        result = get_whisper_model().transcribe(str(tmp_path), fp16=False)
-        transcript = str(result.get("text") or "")[:4000].strip()
+        video_bytes, mime_type = downloaded
+        _initialize_vertexai()
+        model_name = get_env("GEMINI_VIDEO_MODEL") or get_env("GEMINI_MODEL", required=True)
+        model = GenerativeModel(model_name)
+        prompt = _build_video_transcription_prompt()
+        prompt_info = prompt_metadata(prompt, VIDEO_TRANSCRIPTION_PROMPT_VERSION)
+        response, call_policy = generate_text_with_policy(
+            model,
+            [Part.from_data(video_bytes, mime_type=mime_type), prompt],
+            generation_config=VIDEO_TRANSCRIPTION_GENERATION_CONFIG,
+        )
+        transcript = str(getattr(response, "text", "") or "")[:_MAX_TRANSCRIPTION_TEXT_CHARS].strip()
         duration_seconds = time.monotonic() - started_at
         logger.info(
-            "whisper_transcription_completed",
+            "gemini_video_analysis_completed",
             r2_key=r2_key,
+            model_name=model_name,
+            prompt_version=prompt_info.version,
+            prompt_hash=prompt_info.prompt_hash,
+            generation_config=call_policy.generation_config,
             duration_seconds=round(duration_seconds, 2),
             duration_ms=int(duration_seconds * 1000),
             transcript_chars=len(transcript),
@@ -82,14 +135,9 @@ def transcribe_from_r2(r2_key: str) -> str:
     except Exception:
         duration_seconds = time.monotonic() - started_at
         logger.exception(
-            "whisper_transcription_failed",
+            "gemini_video_analysis_failed",
             r2_key=r2_key,
             duration_seconds=round(duration_seconds, 2),
             duration_ms=int(duration_seconds * 1000),
         )
         return ""
-    finally:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except Exception:
-            logger.exception("temporary_transcription_file_delete_failed", tmp_path=str(tmp_path), duration_ms=0)

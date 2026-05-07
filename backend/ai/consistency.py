@@ -20,9 +20,11 @@ LLM_RETRY_ATTEMPTS = 3
 
 CLASSIFICATION_PROMPT_VERSION = "classification.v1"
 VIDEO_CLASSIFICATION_PROMPT_VERSION = "video-classification.v1"
+VIDEO_TRANSCRIPTION_PROMPT_VERSION = "video-transcription.v1"
 TAXONOMY_CLUSTERING_PROMPT_VERSION = "taxonomy-clustering.v1"
 
 CLASSIFICATION_PARSER_VERSION = "classification-parser.v1"
+VIDEO_TRANSCRIPTION_PARSER_VERSION = "video-transcription-parser.v1"
 TAXONOMY_PARSER_VERSION = "taxonomy-parser.v1"
 
 CLASSIFICATION_RESPONSE_SCHEMA_VERSION = "classification-response.v1"
@@ -38,6 +40,7 @@ _DETERMINISTIC_GENERATION_CONFIG: dict[str, Any] = {
 CLASSIFICATION_GENERATION_CONFIG: dict[str, Any] = dict(_DETERMINISTIC_GENERATION_CONFIG)
 IMAGE_ANALYSIS_GENERATION_CONFIG: dict[str, Any] = dict(_DETERMINISTIC_GENERATION_CONFIG)
 VIDEO_ANALYSIS_GENERATION_CONFIG: dict[str, Any] = dict(_DETERMINISTIC_GENERATION_CONFIG)
+VIDEO_TRANSCRIPTION_GENERATION_CONFIG: dict[str, Any] = dict(_DETERMINISTIC_GENERATION_CONFIG)
 URL_METADATA_EXTRACTION_GENERATION_CONFIG: dict[str, Any] = dict(_DETERMINISTIC_GENERATION_CONFIG)
 TAXONOMY_EVOLUTION_GENERATION_CONFIG: dict[str, Any] = dict(_DETERMINISTIC_GENERATION_CONFIG)
 
@@ -134,6 +137,11 @@ def _to_vertex_generation_config(config: dict[str, Any]) -> Any:
     return GenerationConfig(**config)
 
 
+def to_vertex_generation_config(config: dict[str, Any]) -> Any:
+    """Create a Vertex GenerationConfig from a deterministic config dictionary."""
+    return _to_vertex_generation_config(config)
+
+
 def _audit_generation_config(
     config: dict[str, Any],
     *,
@@ -183,6 +191,28 @@ def generate_content_with_policy(
     if errors:
         raise errors[-1]
     raise RuntimeError("No Gemini generation config variants were available.")
+
+
+def generate_text_with_policy(
+    model: Any,
+    prompt_or_parts: str | list[Any],
+    *,
+    generation_config: dict[str, Any],
+) -> tuple[Any, GeminiCallPolicy]:
+    """Call Gemini for non-JSON text output using deterministic generation settings."""
+    config = dict(generation_config)
+    response = model.generate_content(
+        prompt_or_parts,
+        generation_config=to_vertex_generation_config(config),
+    )
+    return response, GeminiCallPolicy(
+        generation_config=_audit_generation_config(
+            config,
+            schema_enforced=False,
+            response_schema_version=None,
+        ),
+        schema_enforced=False,
+    )
 
 
 def build_ai_audit(
