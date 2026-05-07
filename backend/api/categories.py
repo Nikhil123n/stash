@@ -28,17 +28,20 @@ def list_categories(db: Session = Depends(get_db)) -> list[CategoryOut]:
 
     output: list[CategoryOut] = []
     for category in categories:
-        r2_keys = db.execute(
-            select(Artifact.r2_key)
+        thumbnail_rows = db.execute(
+            select(Artifact.r2_key, Artifact.thumbnail_url)
             .where(
                 Artifact.category_id == category.id,
-                Artifact.source_type == "image",
-                Artifact.r2_key.is_not(None),
+                (Artifact.r2_key.is_not(None)) | (Artifact.thumbnail_url.is_not(None)),
             )
             .order_by(Artifact.created_at.desc())
             .limit(3)
-        ).scalars().all()
-        recent_thumbnails = [get_r2_url(r2_key) for r2_key in r2_keys if r2_key]
+        ).all()
+        recent_thumbnails = [
+            get_r2_url(r2_key) if r2_key else thumbnail_url
+            for r2_key, thumbnail_url in thumbnail_rows
+            if r2_key or thumbnail_url
+        ]
         output.append(category_to_out(category, recent_thumbnails=recent_thumbnails))
 
     return output

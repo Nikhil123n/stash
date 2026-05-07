@@ -204,6 +204,27 @@ def _analysis_text_for_storage(
     return None
 
 
+def _source_metadata_for_storage(content_data: dict[str, Any]) -> dict[str, Any] | None:
+    """Return source metadata with large binary values removed."""
+    metadata: dict[str, Any] = {}
+    for key, value in content_data.items():
+        if key in {"image_bytes", "video_bytes"}:
+            continue
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            metadata[key] = value
+    return metadata or None
+
+
+def _thumbnail_url_for_storage(content_data: dict[str, Any]) -> str | None:
+    """Return a URL thumbnail extracted from source metadata."""
+    image_url = content_data.get("image_url")
+    if isinstance(image_url, str) and image_url.strip():
+        return image_url.strip()
+    return None
+
+
 def _build_content_data(payload: MessagePayload, file_bytes: bytes | None) -> dict[str, Any]:
     """Create the content_data dictionary for classification."""
     input_type = payload["input_type"]
@@ -374,6 +395,8 @@ def process_artifact(self: Any, payload: dict[str, Any]) -> None:
             source_type=input_type,
             raw_url=payload.get("url"),
             r2_key=r2_key,
+            thumbnail_url=_thumbnail_url_for_storage(content_data),
+            source_metadata=_source_metadata_for_storage(content_data),
             telegram_msg_id=payload.get("telegram_msg_id"),
             ai_title=result["title"],
             ai_summary=result["summary"],
@@ -667,11 +690,10 @@ def analyze_url_video_and_update(artifact_id: str, url: str, chat_id: int) -> No
         )
 
         old_category_id = artifact.category_id
-        stored_confidence = float(artifact.ai_confidence or 0.0)
         category_changed = False
         category_name = artifact.category.name if artifact.category is not None else "Unknown"
 
-        if result["confidence"] >= stored_confidence:
+        if not artifact.user_overridden:
             new_category = get_or_create_category(db, result["category"])
             category_changed = old_category_id != new_category.id
 
@@ -680,20 +702,22 @@ def analyze_url_video_and_update(artifact_id: str, url: str, chat_id: int) -> No
                 _increment_category_count(db, new_category.id)
 
             artifact.category_id = new_category.id
-            artifact.ai_title = result["title"]
-            artifact.ai_summary = result["summary"]
-            artifact.ai_tags = result["tags"]
-            artifact.ai_transcript = _analysis_text_for_storage(content_data, result)
-            artifact.ai_confidence = result["confidence"]
-            artifact.ai_audit = result.get("ai_audit")
             category_name = new_category.name
+
+        artifact.ai_title = result["title"]
+        artifact.ai_summary = result["summary"]
+        artifact.ai_tags = result["tags"]
+        artifact.ai_transcript = _analysis_text_for_storage(content_data, result)
+        artifact.ai_confidence = result["confidence"]
+        artifact.ai_audit = result.get("ai_audit")
+        artifact.thumbnail_url = _thumbnail_url_for_storage(content_data) or artifact.thumbnail_url
+        artifact.source_metadata = _source_metadata_for_storage(content_data)
 
         _update_search_vector(db, artifact_uuid)
         db.commit()
 
         title = str(artifact.ai_title or result["title"])
-        if category_changed:
-            _safe_async_run(_send_video_processed(chat_id, title, category_name))
+        _safe_async_run(_send_video_processed(chat_id, title, category_name))
 
         logger.info(
             "url_video_analysis_task_completed",

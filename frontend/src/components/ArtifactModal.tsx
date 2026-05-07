@@ -80,6 +80,16 @@ export function ArtifactModal({ artifact, categories, open, onOpenChange }: Arti
             />
           )}
 
+          {detail.source_type !== "image" && detail.thumbnail_url && (
+            <div className="relative overflow-hidden rounded-lg bg-muted">
+              <img
+                src={detail.thumbnail_url}
+                alt={detail.ai_title}
+                className="max-h-[360px] w-full object-cover"
+              />
+            </div>
+          )}
+
           <p className="text-sm leading-6 text-foreground">{detail.ai_summary}</p>
 
           <div className="flex flex-wrap gap-2">

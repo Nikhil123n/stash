@@ -65,6 +65,7 @@ def artifact_to_out(artifact: Artifact) -> ArtifactOut:
         source_type=artifact.source_type,
         raw_url=artifact.raw_url,
         r2_url=_artifact_r2_url(artifact),
+        thumbnail_url=getattr(artifact, "thumbnail_url", None),
         ai_title=artifact.ai_title or "",
         ai_summary=artifact.ai_summary or "",
         ai_tags=list(artifact.ai_tags or []),
@@ -85,4 +86,5 @@ def artifact_to_detail(artifact: Artifact) -> ArtifactDetail:
         **base.model_dump(),
         ai_transcript=artifact.ai_transcript,
         ai_audit=getattr(artifact, "ai_audit", None),
+        source_metadata=getattr(artifact, "source_metadata", None),
     )

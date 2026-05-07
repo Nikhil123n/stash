@@ -102,6 +102,8 @@ def make_artifact(
         source_type="text",
         raw_url=None,
         r2_key=None,
+        thumbnail_url=None,
+        source_metadata=None,
         ai_title="FastAPI Routes",
         ai_summary="Dashboard API route notes.",
         ai_tags=["fastapi", "api", "dashboard"],
@@ -135,7 +137,7 @@ def test_get_categories_returns_list(monkeypatch) -> None:
     session = FakeSession(
         [
             FakeResult([category]),
-            FakeResult(["artifacts/image.jpg"]),
+            FakeResult([("artifacts/image.jpg", None)]),
         ]
     )
 
@@ -147,6 +149,24 @@ def test_get_categories_returns_list(monkeypatch) -> None:
     assert response.json()[0]["recent_thumbnails"] == [
         "https://pub-bucket.r2.dev/artifacts/image.jpg"
     ]
+
+
+def test_get_categories_includes_url_thumbnails(monkeypatch) -> None:
+    """Category previews include URL thumbnails when no R2 key is present."""
+    monkeypatch.setenv("SKIP_AUTH", "true")
+    category = make_category()
+    session = FakeSession(
+        [
+            FakeResult([category]),
+            FakeResult([(None, "https://img.example.com/thumb.jpg")]),
+        ]
+    )
+
+    with override_db(session):
+        response = TestClient(app).get("/api/categories")
+
+    assert response.status_code == 200
+    assert response.json()[0]["recent_thumbnails"] == ["https://img.example.com/thumb.jpg"]
 
 
 def test_search_artifacts_returns_results(monkeypatch) -> None:

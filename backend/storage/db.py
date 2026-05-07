@@ -133,6 +133,8 @@ class Artifact(Base):
     source_type: Mapped[str] = mapped_column(Text, nullable=False)
     raw_url: Mapped[str | None] = mapped_column(Text)
     r2_key: Mapped[str | None] = mapped_column(Text)
+    thumbnail_url: Mapped[str | None] = mapped_column(Text)
+    source_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     telegram_msg_id: Mapped[int | None] = mapped_column(BigInteger)
     ai_title: Mapped[str | None] = mapped_column(Text)
     ai_summary: Mapped[str | None] = mapped_column(Text)

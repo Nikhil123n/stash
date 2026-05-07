@@ -26,6 +26,7 @@ export type ArtifactOut = {
   source_type: string
   raw_url: string | null
   r2_url: string | null
+  thumbnail_url: string | null
   ai_title: string
   ai_summary: string
   ai_tags: string[]
@@ -40,6 +41,7 @@ export type ArtifactOut = {
 
 export type ArtifactDetail = ArtifactOut & {
   ai_transcript: string | null
+  source_metadata: Record<string, unknown> | null
 }
 
 export type PaginatedArtifacts = {

@@ -13,6 +13,14 @@ type ArtifactCardProps = {
 
 export function ArtifactCard({ artifact, onClick }: ArtifactCardProps) {
   const favicon = getFaviconUrl(artifact.raw_url)
+  const rawUrl = artifact.raw_url?.toLowerCase() ?? ""
+  const isVideoUrl =
+    artifact.source_type === "instagram_url" ||
+    rawUrl.includes("youtube.com/shorts") ||
+    rawUrl.includes("youtu.be/") ||
+    rawUrl.includes("tiktok.com") ||
+    rawUrl.includes("/reel") ||
+    rawUrl.includes("/video")
 
   return (
     <Card
@@ -51,6 +59,26 @@ export function ArtifactCard({ artifact, onClick }: ArtifactCardProps) {
             <PlayCircle className="size-12 text-white drop-shadow" />
           </div>
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 pt-12 text-white">
+            <p className="line-clamp-2 text-sm font-semibold">{artifact.ai_title}</p>
+          </div>
+        </div>
+      ) : artifact.thumbnail_url ? (
+        <div className="relative min-h-44 overflow-hidden bg-zinc-100">
+          <img
+            src={artifact.thumbnail_url}
+            alt={artifact.ai_title}
+            className="h-44 w-full object-cover"
+          />
+          {isVideoUrl && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+              <PlayCircle className="size-12 text-white drop-shadow" />
+            </div>
+          )}
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent p-3 pt-12 text-white">
+            <div className="mb-1 flex items-center gap-2 text-xs text-white/85">
+              {favicon ? <img src={favicon} alt="" className="size-4" /> : <Link2 className="size-4" />}
+              <span className="truncate">{getDomain(artifact.raw_url)}</span>
+            </div>
             <p className="line-clamp-2 text-sm font-semibold">{artifact.ai_title}</p>
           </div>
         </div>

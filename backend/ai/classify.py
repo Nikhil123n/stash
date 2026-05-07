@@ -151,16 +151,17 @@ Existing categories in library:
 Return this exact JSON structure:
 {{
   "title": "<10-word title based on actual video content>",
-  "summary": "<2-4 sentence description of the video's substance>",
+  "summary": "<3-5 specific sentences grounded in visible frames, on-screen text, actions, objects, and speech/audio. Do not use vague phrases like 'likely' unless the video is unclear.>",
   "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
   "category": "<best matching category name OR new category name>",
   "is_new_category": true/false,
   "confidence": 0.0-1.0,
-  "content_details": "<timestamped or sequential observations: scenes, actions, objects, people if relevant, on-screen text, audio/speech, and why this category fits>"
+  "content_details": "<detailed sequential observations from the actual video: scenes, actions, objects, people if relevant, on-screen text, audio/speech, and why this category fits>"
 }}
 
 Do not classify this as merely Instagram, TikTok, LinkedIn, YouTube, X, or another source platform.
 Treat the title, caption, description, and URL as weak hints only. The video content is the source of truth.
+Do not invent a tutorial, topic, or intent from the channel name, title, description, or thumbnail if the attached video does not show it.
 Only set "is_new_category" to true when no existing category fits well. Prefer existing categories unless a new category is clearly better."""
 
 

@@ -45,6 +45,7 @@ class ArtifactOut(BaseModel):
     source_type: str
     raw_url: str | None
     r2_url: str | None
+    thumbnail_url: str | None
     ai_title: str
     ai_summary: str
     ai_tags: list[str]
@@ -62,6 +63,7 @@ class ArtifactDetail(ArtifactOut):
 
     ai_transcript: str | None
     ai_audit: dict[str, Any] | None
+    source_metadata: dict[str, Any] | None
 
 
 class ArtifactPage(BaseModel):
